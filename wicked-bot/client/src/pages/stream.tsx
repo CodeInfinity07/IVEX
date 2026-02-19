@@ -122,11 +122,11 @@ export default function StreamPage() {
   }, [botConfigData]);
 
   useEffect(() => {
-    fetch('/api/jack/openai-key')
+    fetch(buildApiUrl('/api/jack/openai-key'))
       .then(res => res.json())
       .then(data => { if (data.success) setOpenaiKey(data.key); })
       .catch(() => {});
-  }, []);
+  }, [buildApiUrl]);
 
   const getOrCreateAudioContext = useCallback(async () => {
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
