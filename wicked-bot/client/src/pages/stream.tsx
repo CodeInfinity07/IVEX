@@ -138,7 +138,12 @@ export default function StreamPage() {
   useEffect(() => {
     fetch(buildApiUrl('/api/jack/openai-key'))
       .then(res => res.json())
-      .then(data => { if (data.success) setOpenaiKey(data.key); })
+      .then(data => {
+        if (data.success) {
+          const key = data.data?.key || data.key || '';
+          setOpenaiKey(key);
+        }
+      })
       .catch(() => {});
   }, [buildApiUrl]);
 
