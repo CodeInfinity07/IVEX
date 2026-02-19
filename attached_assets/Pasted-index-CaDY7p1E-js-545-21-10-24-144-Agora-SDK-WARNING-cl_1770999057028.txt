@@ -1,0 +1,124 @@
+index-CaDY7p1E.js:545 21:10:24:144 Agora-SDK [WARNING]: [client-7abe7] receive exception msg, code: 4002, msg: AUDIO_OUTPUT_LEVEL_TOO_LOW_RECOVER, uid: ARAN9282
+log @ index-CaDY7p1E.js:545
+warning @ index-CaDY7p1E.js:545
+warn @ index-CaDY7p1E.js:545
+Pe._statsCollector.onStatsException @ index-CaDY7p1E.js:613
+(anonymous) @ index-CaDY7p1E.js:564
+emit @ index-CaDY7p1E.js:544
+record @ index-CaDY7p1E.js:564
+setRemoteAudioStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+updateRemoteStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+setInterval
+startUpdateStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:616
+setTimeout
+join @ index-CaDY7p1E.js:616
+await in join
+(anonymous) @ index-CaDY7p1E.js:706
+await in (anonymous)
+s_e @ index-CaDY7p1E.js:37
+a_e @ index-CaDY7p1E.js:37
+c_e @ index-CaDY7p1E.js:37
+f6 @ index-CaDY7p1E.js:37
+tz @ index-CaDY7p1E.js:37
+(anonymous) @ index-CaDY7p1E.js:37
+cD @ index-CaDY7p1E.js:40
+RK @ index-CaDY7p1E.js:37
+HN @ index-CaDY7p1E.js:37
+Mx @ index-CaDY7p1E.js:37
+w_e @ index-CaDY7p1E.js:37Understand this warning
+index-CaDY7p1E.js:545 21:10:28:144 Agora-SDK [WARNING]: [client-7abe7] receive exception msg, code: 2003, msg: SEND_AUDIO_BITRATE_TOO_LOW, uid: PWLU7692
+log @ index-CaDY7p1E.js:545
+warning @ index-CaDY7p1E.js:545
+warn @ index-CaDY7p1E.js:545
+Pe._statsCollector.onStatsException @ index-CaDY7p1E.js:613
+(anonymous) @ index-CaDY7p1E.js:564
+emit @ index-CaDY7p1E.js:544
+record @ index-CaDY7p1E.js:564
+setLocalAudioStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+updateLocalStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+setInterval
+startUpdateStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:616
+setTimeout
+join @ index-CaDY7p1E.js:616
+await in join
+(anonymous) @ index-CaDY7p1E.js:706
+await in (anonymous)
+s_e @ index-CaDY7p1E.js:37
+a_e @ index-CaDY7p1E.js:37
+c_e @ index-CaDY7p1E.js:37
+f6 @ index-CaDY7p1E.js:37
+tz @ index-CaDY7p1E.js:37
+(anonymous) @ index-CaDY7p1E.js:37
+cD @ index-CaDY7p1E.js:40
+RK @ index-CaDY7p1E.js:37
+HN @ index-CaDY7p1E.js:37
+Mx @ index-CaDY7p1E.js:37
+w_e @ index-CaDY7p1E.js:37Understand this warning
+index-CaDY7p1E.js:545 21:10:29:144 Agora-SDK [WARNING]: [client-7abe7] receive exception msg, code: 2002, msg: AUDIO_OUTPUT_LEVEL_TOO_LOW, uid: ARAN9282
+log @ index-CaDY7p1E.js:545
+warning @ index-CaDY7p1E.js:545
+warn @ index-CaDY7p1E.js:545
+Pe._statsCollector.onStatsException @ index-CaDY7p1E.js:613
+(anonymous) @ index-CaDY7p1E.js:564
+emit @ index-CaDY7p1E.js:544
+record @ index-CaDY7p1E.js:564
+setRemoteAudioStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+updateRemoteStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+setInterval
+startUpdateStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:616
+setTimeout
+join @ index-CaDY7p1E.js:616
+await in join
+(anonymous) @ index-CaDY7p1E.js:706
+await in (anonymous)
+s_e @ index-CaDY7p1E.js:37
+a_e @ index-CaDY7p1E.js:37
+c_e @ index-CaDY7p1E.js:37
+f6 @ index-CaDY7p1E.js:37
+tz @ index-CaDY7p1E.js:37
+(anonymous) @ index-CaDY7p1E.js:37
+cD @ index-CaDY7p1E.js:40
+RK @ index-CaDY7p1E.js:37
+HN @ index-CaDY7p1E.js:37
+Mx @ index-CaDY7p1E.js:37
+w_e @ index-CaDY7p1E.js:37Understand this warning
+index-CaDY7p1E.js:545 21:10:34:145 Agora-SDK [WARNING]: [client-7abe7] receive exception msg, code: 4002, msg: AUDIO_OUTPUT_LEVEL_TOO_LOW_RECOVER, uid: ARAN9282
+log @ index-CaDY7p1E.js:545
+warning @ index-CaDY7p1E.js:545
+warn @ index-CaDY7p1E.js:545
+Pe._statsCollector.onStatsException @ index-CaDY7p1E.js:613
+(anonymous) @ index-CaDY7p1E.js:564
+emit @ index-CaDY7p1E.js:544
+record @ index-CaDY7p1E.js:564
+setRemoteAudioStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+updateRemoteStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:564
+setInterval
+startUpdateStats @ index-CaDY7p1E.js:564
+(anonymous) @ index-CaDY7p1E.js:616
+setTimeout
+join @ index-CaDY7p1E.js:616
+await in join
+(anonymous) @ index-CaDY7p1E.js:706
+await in (anonymous)
+s_e @ index-CaDY7p1E.js:37
+a_e @ index-CaDY7p1E.js:37
+c_e @ index-CaDY7p1E.js:37
+f6 @ index-CaDY7p1E.js:37
+tz @ index-CaDY7p1E.js:37
+(anonymous) @ index-CaDY7p1E.js:37
+cD @ index-CaDY7p1E.js:40
+RK @ index-CaDY7p1E.js:37
+HN @ index-CaDY7p1E.js:37
+Mx @ index-CaDY7p1E.js:37
+w_e @ index-CaDY7p1E.js:37Understand this warning

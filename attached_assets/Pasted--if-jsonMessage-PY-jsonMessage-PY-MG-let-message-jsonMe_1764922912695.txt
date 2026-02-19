@@ -1,0 +1,348 @@
+ if (jsonMessage.PY && jsonMessage.PY.MG) {
+                            let message = jsonMessage.PY.MG;
+                            let UID = jsonMessage.PY.UID;
+
+                            const user_name = findPlayerName(UID);
+                            const user_id = findPlayerID(UID);
+
+                            if (user_id && savedData[user_id]) {
+                                savedData[user_id].lastSeen = new Date().toISOString();
+                                saveData(savedData, path_users);
+                            }
+
+                            addMessage(`${user_name}: ${message}`);
+
+                            // Bot commands handling
+                            if (String(message).startsWith("/mic")) {
+                                let UID = jsonMessage.PY.UID;
+                                const user_mic_id = findPlayerID(UID);
+                                if (isMemberUID(UID)) {
+                                    inviteMic(UID);
+                                } else if (user_mic_id && botConfig.loyal_members?.includes(user_mic_id)) {
+                                    inviteMic(UID);
+                                }
+                            }
+
+                            if (String(message).startsWith("/admins")) {
+                                if (botConfig.admins && botConfig.admins.length > 0) {
+                                    botConfig.admins.forEach((admin, index) => {
+                                        setTimeout(() => {
+                                            const admin_name = getName(admin);
+                                            sendMessage(`Admin ${index + 1}: ${admin_name} [${admin}]`);
+                                        }, index * 100);
+                                    });
+                                } else {
+                                    sendMessage('No admins configured');
+                                }
+                            }
+
+                            else if (String(message).startsWith("/spam")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const spam_word = String(message).split(" ")[1];
+                                    botConfig.spamWords.push(spam_word);
+                                    sendMessage(`Added!`);
+                                    addSpamWord(spam_word);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/seen")) {
+                                try {
+                                    const player_id = String(message).replace(/^\/seen\s*/, '').trim().toUpperCase();
+
+                                    if (!player_id) {
+                                        sendMessage("Usage: /seen [PLAYER_ID]");
+                                        return;
+                                    }
+
+                                    if (!savedData[player_id]) {
+                                        sendMessage(`❌ No data found for player ID: ${player_id}`);
+                                        return;
+                                    }
+
+                                    const userData = savedData[player_id];
+                                    const userName = userData.NM;
+                                    const lastSeen = userData.lastSeen;
+
+                                    if (!lastSeen) {
+                                        sendMessage(`👤 ${userName} [${player_id}] - No last seen data available`);
+                                        return;
+                                    }
+
+                                    const lastSeenDate = new Date(lastSeen);
+                                    const now = new Date();
+                                    const diffMs = now - lastSeenDate;
+                                    const diffSeconds = Math.floor(diffMs / 1000);
+                                    const diffMinutes = Math.floor(diffSeconds / 60);
+                                    const diffHours = Math.floor(diffMinutes / 60);
+                                    const diffDays = Math.floor(diffHours / 24);
+
+                                    let timeAgo;
+                                    if (diffSeconds < 60) {
+                                        timeAgo = `${diffSeconds} second${diffSeconds !== 1 ? 's' : ''} ago`;
+                                    } else if (diffMinutes < 60) {
+                                        timeAgo = `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
+                                    } else if (diffHours < 24) {
+                                        timeAgo = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+                                    } else {
+                                        timeAgo = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+                                    }
+
+                                    const formattedDate = lastSeenDate.toLocaleString('en-PK', {
+                                        timeZone: 'Asia/Karachi',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                    });
+
+                                    sendMessage(`${timeAgo} (📅 ${formattedDate}) [👤 ${userName}]`);
+
+                                } catch (err) {
+                                    console.error('Error in /seen command:', err);
+                                    sendMessage("❌ Error retrieving user data");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/whois")) {
+                                const player_id = String(message).replace(/^\/whois\s*/, '');
+                                const names = getNames(player_id.toUpperCase());
+                                sendMessage(names);
+                            }
+
+                            else if (String(message).startsWith("/ulm")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    const [command, mic] = String(message).split(" ");
+
+                                    if (!botConfig.admins.includes(user_id)) {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                        return;
+                                    }
+
+                                    if (String(mic).toLowerCase() === "all") {
+                                        for (let i = 1; i <= 10; i++) {
+                                            unlockMic(i);
+                                        }
+                                        sendMessage(`All microphones (1-10) have been unlocked.`);
+                                    } else {
+                                        const micNumber = Number(mic);
+
+                                        if (isNaN(micNumber) || micNumber < 1 || micNumber > 10) {
+                                            sendMessage(`Invalid microphone number. Please specify 1-10 or "all".`);
+                                        } else {
+                                            unlockMic(micNumber);
+                                            sendMessage(`Microphone ${micNumber} has been unlocked.`);
+                                        }
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/ulm [mic_number]' or '/ulm all'");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/cn")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    exitclub();
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    changeName(String(message).replace(/^\/cn\s*/, ''));
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    joinClub(`${club_code}`);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/say")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    sendMessage(String(message).replace(/^\/say\s*/, ''));
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/refresh")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    refresh();
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/ma")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const u_id = String(message).replace(/^\/ma\s*/, '');
+                                    makeAdmin(u_id);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/rma")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const u_id = String(message).replace(/^\/rma\s*/, '');
+                                    removeAdmin(u_id);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/iv")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    if (botConfig.admins.includes(user_id)) {
+                                        if (allowInvites) {
+                                            const usage = await loadIcicUsage();
+
+                                            if (usage.lastUsed && isToday(usage.lastUsed)) {
+                                                const timeRemaining = getTimeUntilMidnight();
+                                                const lastUser = usage.usedBy ? getName(usage.usedBy) : 'Unknown';
+
+                                                sendMessage(`⏰ /iv has already been used today by ${lastUser}.`);
+                                                setTimeout(() => {
+                                                    sendMessage(`Try again in ${timeRemaining}.`);
+                                                }, 100);
+
+                                                logger.info(`/iv command blocked - already used today by ${usage.usedBy}`);
+                                            } else {
+                                                const updated = await updateIcicUsage(user_id);
+
+                                                if (updated) {
+                                                    clubInvite();
+                                                    sendMessage(`✅ Club invites sent! (Daily limit: 1/1 used)`);
+                                                    logger.info(`/iv command executed by ${user_id} - daily usage recorded`);
+                                                } else {
+                                                    sendMessage(`❌ Failed to update usage tracking. Try again.`);
+                                                }
+                                            }
+                                        } else {
+                                            sendMessage(`You cannot use this command currently.`);
+                                        }
+                                    } else {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                    }
+                                } catch (err) {
+                                    logger.error('Error in /iv command:', err);
+                                    sendMessage("Error processing command. Please try again.");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/imem")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                try {
+                                    if (botConfig.admins.includes(user_id)) {
+                                        if (allowInvites) {
+                                            memberInvite();
+                                        } else {
+                                            sendMessage(`You cannot use this command currently.`);
+                                        }
+                                    } else {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/lm [mic_number]'");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/move")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                const [command, move_code] = String(message).split(" ");
+                                if (botConfig.admins.includes(user_id) && moveable_clubs.includes(move_code)) {
+                                    exitclub();
+                                    joinClub(move_code);
+                                } else if (!moveable_clubs.includes(move_code)) {
+                                    sendMessage(`This club is not authorized for me to join.`);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/rejoin")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    exitclub();
+                                    joinClub(club_code);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/ub")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const args = String(message).trim().split(/\s+/);
+
+                                    if (args[1] === "all") {
+                                        for (const userId of bannedUserIds) {
+                                            unbanUser(userId);
+                                            await sleep(100);
+                                        }
+                                    } else if (args[1] === "check") {
+                                        checkBannedUsers();
+                                        check_ban_list = true;
+                                    } else if (args[1]) {
+                                        const player_id = String(message).replace(/^\/ub\s*/, '');
+                                        unbanID(player_id.toUpperCase());
+                                    } else {
+                                        sendMessage(`Usage: /ub <userId> | /ub all | /ub check`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/joinMic")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    joinAdminMic();
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/lm")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    const [command, mic] = String(message).split(" ");
+
+                                    if (!botConfig.admins.includes(user_id)) {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                        return;
+                                    }
+
+                                    if (String(mic).toLowerCase() === "all") {
+                                        for (let i = 1; i <= 10; i++) {
+                                            lockMic(i);
+                                        }
+                                        sendMessage(`All microphones (1-10) have been locked.`);
+                                    } else {
+                                        const micNumber = Number(mic);
+
+                                        if (isNaN(micNumber) || micNumber < 1 || micNumber > 10) {
+                                            sendMessage(`Invalid microphone number. Please specify 1-10 or "all".`);
+                                        } else {
+                                            lockMic(micNumber);
+                                            sendMessage(`Microphone ${micNumber} has been locked.`);
+                                        }
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/lm [mic_number]' or '/lm all'");
+                                }
+                            }
+
+                            else if (botConfig.spamWords.some(word => String(message).toLowerCase().includes(word))) {
+                                applyPunishment(UID, 'spamWords');
+                                deleteMsg(jsonMessage.PY.MID);
+                                botState.stats.spamBlocked++;
+                            }
+                        }

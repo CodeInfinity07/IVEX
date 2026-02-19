@@ -1,0 +1,54 @@
+modules = ["nodejs-20", "web"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+packages = ["yt-dlp", "ffmpeg"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd wicked-bot && npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["bash", "-c", "cd wicked-bot && npm start"]
+build = ["bash", "-c", "cd wicked-bot && npm run build"]
+
+[userenv]
+
+[userenv.shared]
+CLUB_CODE = "3029915"
+CLUB_NAME = "RexSquad"
+BOT_UID = "67ed448c87c13d000172aa9c"
+BOT_API_URL = "https://wickedrex-143.botpanels.live"
+MYSQL_HOST = "94.72.106.77"
+MYSQL_USER = "ryzon"
+MYSQL_PASSWORD = "zain0980"
+MYSQL_DATABASE = "ivex"
+MUSIC_UPLOAD_ENABLED = "false"
+VITE_BOT_API_URL = "https://wickedrex-143.botpanels.live"

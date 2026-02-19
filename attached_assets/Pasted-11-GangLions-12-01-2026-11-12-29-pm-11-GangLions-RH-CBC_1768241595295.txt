@@ -1,0 +1,834 @@
+11|GangLions  | 12/01/2026, 11:12:29 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYNgVtuaXj43buqDdt2eHZXcElyTt4Qk+cqHwj42y0xa5NX8UGIyNk1PMLJITLcwNTU2MEhOTktLM0lJMTYwtLC2Nky1Mey1TMxNCGBjMZXKZGRkYGVgYGBlAfCYwyQwmWcCkIIOJpYGZhYVBvKGZuaGlibmlKQeDj7+/m6GJpSEgAAD//4FRJSQ=',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10050
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010704.201558171 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8250.509780998 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:29 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }
+11|GangLions  | 12/01/2026, 11:12:30 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYNA3qbbLXLlapO7eTz5nVf6Nu1cHRt6/prP2u96zwxVn9ixWYDA2Tk4xs0hOtDA3NDUxSkxMSkozS0sxNTG2sLQ0TrYw7bNMzUwIYWAo5GdgZWRgZGBhYGQA8ZnAJDOYZAGTggwmlgZmFhYG8YZm5oaWJuaWphwMPv7+boYmloaAAAAA//9j9yUQ',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10049
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010704.785110829 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8249.92631274 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:30 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }
+11|GangLions  | 12/01/2026, 11:12:30 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYFCcrMhzxNLv3mr3swob7z+yes5c8X+ls1C7u27rc+Zeiy4FBmPj5BQzi+REC3NDUxOjxMSkpDSztBRTE2MLS0vjZAvTPsvUzIQQBoY20S8MjAyMDCwMjAwgPhOYZAaTLGBSkMHE0sDMwsIg3tDM3NDSxNzSlIPBx9/fzdDE0hAQAAD//+I0JEA=',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10049
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010705.350841769 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8249.360470381 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:31 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }
+11|GangLions  | 12/01/2026, 11:12:31 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYNA0ipBeyBZgmzvb4MxRzwcBirvyg/6vfrzrpJfr0it/pJQVGIyNk1PMLJITLcwNTU2MEhOTktLM0lJMTYwtLC2Nky1M+y1TMxNCGBhOOfgyMDIwMrAwMDKA+ExgkhlMsoBJQQYTSwMzCwuDeEMzc0NLE3NLUw4GH39/N0MTS0NAAAAA///4RiSN',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10048
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010705.956007585 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8248.755303735 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:31 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }
+11|GangLions  | 12/01/2026, 11:12:31 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYBBzSw3/vmi15yl3sVmXD3e0qQiJHJ/7MsTn9Iwb+j46y4UVGIyNk1PMLJITLcwNTU2MEhOTktLM0lJMTYwtLC2Nky1M+y1TMxNCGBjqatlYGBkYGVgYGBlAfCYwyQwmWcCkIIOJpYGZhYVBvKGZuaGlibmlKQeDj7+/m6GJpSEgAAD//9ysI+c=',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10048
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010706.553514493 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8248.157828187 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:32 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }
+11|GangLions  | 12/01/2026, 11:12:32 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'REA',
+11|GangLions  |   PY: {
+11|GangLions  |     CID: '4906880',
+11|GangLions  |     NM: 'SHAAHI-DERA𓅛',
+11|GangLions  |     ONM: 'Syed Shah',
+11|GangLions  |     TP: 3,
+11|GangLions  |     DP: 4,
+11|GangLions  |     CC: 'PK',
+11|GangLions  |     LG: 'en',
+11|GangLions  |     AN: '                 WELCOME TO SHAAHI-DERA 𓅛\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '🎲 Where friendship meets fun 🎲\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '       ╔════ 🔹 CLUB RULES 🔹 ════╗\n' +
+11|GangLions  |       '\n' +
+11|GangLions  |       '1️⃣ 🚫 No buddy requests without permission – respect everyone’s privacy.\n' +
+11|GangLions  |       '2️⃣ 🗣️ No abusive or rude language – kindness only.\n' +
+11|GangLions  |       '3️⃣ 🤝 Respect each other – we’re family and friends here.',
+11|GangLions  |     OUL: { '69107f1afc590f0001ba51aa': [Object] },
+11|GangLions  |     OUC: 1,
+11|GangLions  |     CLC: false,
+11|GangLions  |     FC: false,
+11|GangLions  |     VCU: null,
+11|GangLions  |     SAL: {
+11|GangLions  |       '102d1d1aced8ac2eec19a9e2664ef00bd9199aa0ee84c641e375f370578356d7fba1f4e46e35bf56': [Object]
+11|GangLions  |     },
+11|GangLions  |     AL: {
+11|GangLions  |       '2c1225aabf349a54d35f2aedb0c66bfe6a3f7a788bf7f96b0b456db9bd6a629e6431bc5a455d5901': [Object],
+11|GangLions  |       '336f95bd0cd65775f836a2a742e7c8f98d0ec4b2be55e1fd5e5a2ff2c7eaaee3d5f9c6131600ef4b': [Object],
+11|GangLions  |       '38d30de3b9aa3d9fca7649bd5719ef4db0d9fc08d349fd9fbca8ce169e3c67397c570352201a1dd8': [Object],
+11|GangLions  |       '634811db6f744e9f98039fe535defb809c268ab01fc1dff8dddcf9aa367773c737272ec6e17ff4b7': [Object],
+11|GangLions  |       '69107f1afc590f0001ba51aa': [Object],
+11|GangLions  |       ffb3979486c20c50554ae451d741253169af25ad2f4f90fd83ae740b347ae9cbf5544bbfdb311098: [Object]
+11|GangLions  |     },
+11|GangLions  |     VC: {
+11|GangLions  |       VCH: '4906880_167194795',
+11|GangLions  |       AT: '007eJxSYHirsCTQ5jf75LAzu+Y8WumS8OVX9tPlBks5jq/9doV16r42BQZj4+QUM4vkRAtzQ1MTo8TEpKQ0s7QUUxNjC0tL42QL0wmWqZkJIQwMYYe6mRgZGBlYGBgZQHwmMMkMJlnApCCDiaWBmYWFQbyhmbmhpYm5pSkHg4+/v5uhiaUhIAAA//+fpigD',
+11|GangLions  |       CS: [Object]
+11|GangLions  |     },
+11|GangLions  |     FGC: 6,
+11|GangLions  |     HTS: 10,
+11|GangLions  |     AE: true,
+11|GangLions  |     TAE: true,
+11|GangLions  |     BAE: true,
+11|GangLions  |     JAE: true,
+11|GangLions  |     MSI: [
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object],
+11|GangLions  |       [Object], [Object]
+11|GangLions  |     ],
+11|GangLions  |     OM: {
+11|GangLions  |       AV: '1409477975796174',
+11|GangLions  |       CBIU: 'clubs_default_chatbubble',
+11|GangLions  |       CVT: 0,
+11|GangLions  |       EEIU: '',
+11|GangLions  |       LSHP: false,
+11|GangLions  |       NM: 'Syed Shah',
+11|GangLions  |       PAIU: '',
+11|GangLions  |       PFIU: 'clubs_default_profileframe',
+11|GangLions  |       PPEIU: '',
+11|GangLions  |       PSIU: '',
+11|GangLions  |       RTD: [Object],
+11|GangLions  |       UID: '2076c8ccf6cf1927f0f5516c907925b670fdf459de99fac0a820bd884a76e7a6d35273aaff3a8cf8'
+11|GangLions  |     },
+11|GangLions  |     GCR: { T: 0, RK: 0 },
+11|GangLions  |     PRG: {
+11|GangLions  |       CID: '4906880',
+11|GangLions  |       HU: [Object],
+11|GangLions  |       JU: [Object],
+11|GangLions  |       LU: [Object],
+11|GangLions  |       TTR: 10047
+11|GangLions  |     },
+11|GangLions  |     BIU: 'clubs_default_bg',
+11|GangLions  |     CIU: 'clubs_default_frame',
+11|GangLions  |     LVL: 19,
+11|GangLions  |     FF: {
+11|GangLions  |       IUPE: true,
+11|GangLions  |       IMPE: true,
+11|GangLions  |       IOAE: true,
+11|GangLions  |       IOIE: true,
+11|GangLions  |       ICE: true,
+11|GangLions  |       IRNGE: true,
+11|GangLions  |       ISAE: true
+11|GangLions  |     },
+11|GangLions  |     PT: { ID: 'disco', TL: -7010707.162860698 },
+11|GangLions  |     WSIU: 'clubs_default_welcomestyle',
+11|GangLions  |     NPIU: 'clubs_default_nameplate',
+11|GangLions  |     SES: false,
+11|GangLions  |     META: { C: 'L', JA: 1768234360 },
+11|GangLions  |     BDS: null,
+11|GangLions  |     OPS: [],
+11|GangLions  |     VCP: 3,
+11|GangLions  |     RNGFSC: 1,
+11|GangLions  |     LAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     SCAD: { ID: '7', CT: 0, LT: 0 },
+11|GangLions  |     PCM: { R: 5, CG: 'non-ar', CET: 8247.548486882 },
+11|GangLions  |     SLMUT: false,
+11|GangLions  |     TMST: 0,
+11|GangLions  |     CPI: { IH: false, IC: false }
+11|GangLions  |   },
+11|GangLions  |   SQ: 1
+11|GangLions  | }
+11|GangLions  | 12/01/2026, 11:12:32 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GA',
+11|GangLions  |   PY: { TY: 2, BID: 1, D: { LA: 'm2', CI: [Object] }, OQ: true },
+11|GangLions  |   SQ: 2
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Environment credentials updated: AGORA_CHANNEL, AGORA_TOKEN
+11|GangLions  | [INFO] 🔄 Agora credentials updated in memory: channel=4906880_167194795
+11|GangLions  | [INFO] 🎤 Agora credentials updated: Channel=4906880_16...
+11|GangLions  | [INFO] ➕ Added UID to level check queue: 69107f1afc590f0001ba51aa
+11|GangLions  | [INFO] 📊 Processing 1 level checks (0 remaining in queue)
+11|GangLions  | [INFO] 📊 Executed level check for UID: 69107f1afc590f0001ba51aa
+11|GangLions  | {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCP',
+11|GangLions  |   PY: '{"S":false,"UID":"69107f1afc590f0001ba51aa"}'
+11|GangLions  | }
+11|GangLions  | [INFO] ✅ Level check queue empty
+11|GangLions  | 12/01/2026, 11:12:32 pm: {
+11|GangLions  |   RH: 'CBC',
+11|GangLions  |   PU: 'GCPA',
+11|GangLions  |   PY: {
+11|GangLions  |     ER: 1,
+11|GangLions  |     CUP: {
+11|GangLions  |       UD: [Object],
+11|GangLions  |       CD: [Object],
+11|GangLions  |       PD: [Object],
+11|GangLions  |       LD: [Object],
+11|GangLions  |       RD: [Object],
+11|GangLions  |       CPD: [Object],
+11|GangLions  |       LGS: null,
+11|GangLions  |       GD: null
+11|GangLions  |     },
+11|GangLions  |     UID: '69107f1afc590f0001ba51aa'
+11|GangLions  |   }
+11|GangLions  | }
+11|GangLions  | [INFO] 🔨 Banning user 69107f1afc590f0001ba51aa for: lowLevel
+11|GangLions  | { RH: 'CBC', PU: 'RE', PY: '{"CID":"4906880"}' }

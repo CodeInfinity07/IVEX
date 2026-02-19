@@ -1,0 +1,42 @@
+[
+  {
+    "UID": "user001",
+    "NM": "Alex Johnson",
+    "LVL": 15
+  },
+  {
+    "UID": "user002",
+    "NM": "Sarah Chen",
+    "LVL": 8
+  },
+  {
+    "UID": "user003",
+    "NM": "Mike Davis",
+    "LVL": 22
+  },
+  {
+    "UID": "user004",
+    "NM": "Emma Wilson",
+    "LVL": 5
+  },
+  {
+    "UID": "user005",
+    "NM": "Chris Brown",
+    "LVL": 12
+  },
+  {
+    "UID": "user006",
+    "NM": "Lisa Anderson",
+    "LVL": 3
+  },
+  {
+    "UID": "user007",
+    "NM": "John Smith",
+    "LVL": 2
+  },
+  {
+    "UID": "user008",
+    "NM": "Maria Garcia",
+    "LVL": 18
+  }
+]

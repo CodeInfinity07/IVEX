@@ -1,0 +1,7032 @@
+const http = require('http');
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+const fs = require('fs/promises');
+const fsSync = require('fs');
+const path = require('path');
+const os = require('os');
+const { OpenAI } = require('openai');
+const axios = require('axios');
+const mysql = require('mysql2/promise');
+const WebSocket = require('ws');
+const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const { spawn } = require('child_process');
+
+require('dotenv').config();
+
+// Global mutex for .env file operations to prevent race conditions
+const envFileMutex = {
+    locked: false,
+    queue: [],
+    async acquire() {
+        return new Promise((resolve) => {
+            if (!this.locked) {
+                this.locked = true;
+                resolve();
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    },
+    release() {
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            next();
+        } else {
+            this.locked = false;
+        }
+    }
+};
+
+// Simple logger replacement
+const logger = {
+    info: (message) => console.log(`[INFO] ${message}`),
+    error: (message) => console.error(`[ERROR] ${message}`),
+    warn: (message) => console.warn(`[WARN] ${message}`)
+};
+
+// MySQL Configuration - all credentials from environment variables
+const MYSQL_CONFIG = {
+    host: process.env.MYSQL_HOST || '94.72.106.77',
+    user: process.env.MYSQL_USER || 'ryzon',
+    password: process.env.MYSQL_PASSWORD || 'zain0980',
+    database: 'ivex',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+};
+
+// Write lock for club_members.json to prevent race conditions
+class FileLock {
+    constructor() {
+        this.locked = false;
+        this.queue = [];
+    }
+
+    async acquire() {
+        return new Promise((resolve) => {
+            if (!this.locked) {
+                this.locked = true;
+                resolve();
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    }
+
+    release() {
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            next();
+        } else {
+            this.locked = false;
+        }
+    }
+
+    async withLock(fn) {
+        await this.acquire();
+        try {
+            return await fn();
+        } finally {
+            this.release();
+        }
+    }
+}
+
+const membersFileLock = new FileLock();
+
+// Message queue system
+class MessageQueue {
+    constructor() {
+        this.queue = [];
+        this.processing = false;
+        this.currentSequence = 2;
+    }
+
+    getNextSequence() {
+        return this.currentSequence++;
+    }
+
+    resetSequence() {
+        this.currentSequence = 2;
+    }
+
+    async enqueue(messagePayload, skipDelay = false) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ messagePayload, resolve, reject, skipDelay });
+            this.process();
+        });
+    }
+
+    async process() {
+        if (this.processing || this.queue.length === 0) {
+            return;
+        }
+
+        this.processing = true;
+
+        while (this.queue.length > 0) {
+            const { messagePayload, resolve, reject, skipDelay } = this.queue.shift();
+
+            try {
+                let parsedMessage;
+                let needsSequence = false;
+
+                try {
+                    parsedMessage = JSON.parse(messagePayload);
+                    needsSequence = parsedMessage.hasOwnProperty('SQ');
+                } catch {
+                    await this._sendDirectly(messagePayload);
+                    resolve();
+                    if (!skipDelay) {
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                    continue;
+                }
+
+                if (needsSequence) {
+                    parsedMessage.SQ = this.getNextSequence();
+                }
+
+                await this._sendDirectly(JSON.stringify(parsedMessage));
+                console.log(parsedMessage);
+                resolve();
+            } catch (error) {
+                reject(error);
+            }
+
+            if (!skipDelay) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+        }
+
+        this.processing = false;
+    }
+
+    async _sendDirectly(message) {
+        return new Promise((resolve, reject) => {
+            if (!botState.ws || botState.ws.readyState !== WebSocket.OPEN) {
+                reject(new Error("WebSocket is not open"));
+                return;
+            }
+
+            try {
+                const base64Message = Buffer.from(message, 'utf8').toString('base64');
+
+                botState.ws.send(base64Message, (err) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    clearQueue() {
+        const clearedCount = this.queue.length;
+        this.queue.forEach(item => item.reject(new Error('Queue cleared')));
+        this.queue = [];
+        return clearedCount;
+    }
+
+    getQueueLength() {
+        return this.queue.length;
+    }
+}
+
+// Create global message queue instance
+const messageQueue = new MessageQueue();
+
+// Express app setup
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public'));
+
+let mysqlPool;
+let inClub = false;
+let authRequired = false;
+let authMessage = null;
+let pendingVCRequest = null; // Pending VC credential fetch request
+let wsIntervals = []; // Track all WebSocket-related intervals for cleanup
+let isReconnecting = false;
+let reconnectTimer = null;
+let intentionalDisconnect = false;
+let currentSocketId = 0;
+let club_code = process.env.CLUB_CODE;
+let club_name = process.env.CLUB_NAME;
+let my_uid = process.env.BOT_UID;
+let bot_ep = process.env.EP;
+let bot_key = process.env.KEY;
+const PORT = process.env.PORT;
+const DASHBOARD_URL = process.env.DASHBOARD_URL || 'https://evilplanet.botpanels.live';
+let allowInvites = false;
+let membersData = [];
+let bannedUserIds = [];
+let check_ban_list = false;
+const ICIC_USAGE_FILE = './icic_usage.json';
+const SETTINGS_FILE = './settings.json';
+const MEMBERS_FILE = './club_members.json';
+const MODERATORS_FILE = './data/moderators.json';
+const ACTIVITY_LOGS_FILE = './data/activity_logs.json';
+const SONGS_DIR = './data/songs';
+const SONGS_METADATA_FILE = './data/songs_metadata.json';
+const SECRET_MESSAGES_FILE = './data/secret_messages.json';
+const FEATURE_TOGGLES_FILE = './data/feature_toggles.json';
+const FEATURES_PASSWORD = 'WICKED@123!@#';
+const MAX_SONGS = 10;
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const conversationHistory = new Map();
+
+// Agora configuration for live streaming
+// Mutable Agora credentials object - updated when CJA/REA messages are received
+let agoraCredentials = {
+    appId: process.env.AGORA_APP_ID || '',
+    channel: process.env.AGORA_CHANNEL || '',
+    token: process.env.AGORA_TOKEN || '',
+    userId: process.env.AGORA_USER_ID || '0'
+};
+
+// Function to update Agora credentials globally
+function updateAgoraCredentials(newChannel, newToken) {
+    agoraCredentials.channel = newChannel;
+    agoraCredentials.token = newToken;
+    // Also update process.env for consistency
+    process.env.AGORA_CHANNEL = newChannel;
+    process.env.AGORA_TOKEN = newToken;
+    logger.info(`🔄 Agora credentials updated in memory: channel=${newChannel}`);
+}
+
+// Bot control secret for WebSocket authentication
+const BOT_CONTROL_SECRET = process.env.BOT_CONTROL_SECRET || 'rexsquad_stream_secret_2024';
+
+// Ensure songs directory exists
+async function ensureSongsDir() {
+    try {
+        await fs.access(SONGS_DIR);
+    } catch {
+        await fs.mkdir(SONGS_DIR, { recursive: true });
+    }
+}
+
+// Load songs metadata
+async function loadSongsMetadata() {
+    try {
+        const data = await fs.readFile(SONGS_METADATA_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            await fs.writeFile(SONGS_METADATA_FILE, '[]', 'utf8');
+            return [];
+        }
+        return [];
+    }
+}
+
+// Save songs metadata
+async function saveSongsMetadata(songs) {
+    await fs.writeFile(SONGS_METADATA_FILE, JSON.stringify(songs, null, 2), 'utf8');
+}
+
+// Download YouTube video as MP3 using yt-dlp
+async function downloadYouTubeAsMP3(youtubeUrl) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            await ensureSongsDir();
+            
+            const uniqueId = crypto.randomUUID().slice(0, 8);
+            const tempFilename = `yt_${uniqueId}`;
+            const outputTemplate = path.join(SONGS_DIR, `${tempFilename}.%(ext)s`);
+            
+            logger.info(`📥 Starting YouTube download: ${youtubeUrl}`);
+            
+            const args = [
+                '--cookies', 'cookies.txt',
+                '--extractor-args', 'youtube:player_client=web',
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0',
+                '-o', outputTemplate,
+                '--no-playlist',
+                '--print', 'title',
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                youtubeUrl
+            ];
+            
+            const ytdlp = spawn('/root/.local/bin/yt-dlp', args);
+            let videoTitle = '';
+            let errorOutput = '';
+            
+            ytdlp.stdout.on('data', (data) => {
+                const output = data.toString().trim();
+                if (output && !output.includes('[')) {
+                    videoTitle = output;
+                }
+            });
+            
+            ytdlp.stderr.on('data', (data) => {
+                const output = data.toString();
+                errorOutput += output;
+                logger.info(`yt-dlp: ${output.trim()}`);
+            });
+            
+            ytdlp.on('error', (err) => {
+                logger.error(`yt-dlp spawn error: ${err.message}`);
+                reject(new Error('yt-dlp not installed. Please install yt-dlp and ffmpeg.'));
+            });
+            
+            ytdlp.on('close', async (code) => {
+                if (code !== 0) {
+                    logger.error(`yt-dlp exited with code ${code}: ${errorOutput}`);
+                    reject(new Error(`Download failed: ${errorOutput || 'Unknown error'}`));
+                    return;
+                }
+                
+                const mp3Filename = `${tempFilename}.mp3`;
+                const mp3Path = path.join(SONGS_DIR, mp3Filename);
+                
+                try {
+                    await fs.access(mp3Path);
+                    const stats = await fs.stat(mp3Path);
+                    const cleanTitle = videoTitle || `YouTube_${uniqueId}`;
+                    
+                    let songsMetadata = await loadSongsMetadata();
+                    let songsArray = [];
+                    
+                    if (Array.isArray(songsMetadata)) {
+                        songsArray = songsMetadata;
+                    } else if (songsMetadata && songsMetadata.songs) {
+                        songsArray = songsMetadata.songs;
+                    }
+                    
+                    const newSong = {
+                        id: uniqueId,
+                        filename: mp3Filename,
+                        originalName: `${cleanTitle}.mp3`,
+                        size: stats.size,
+                        youtubeUrl: youtubeUrl,
+                        addedAt: new Date().toISOString()
+                    };
+                    
+                    songsArray.push(newSong);
+                    await saveSongsMetadata({ songs: songsArray });
+                    
+                    logger.info(`✅ YouTube download complete: ${cleanTitle}`);
+                    resolve({
+                        success: true,
+                        song: newSong,
+                        title: cleanTitle,
+                        index: songsArray.length - 1
+                    });
+                } catch (err) {
+                    logger.error(`MP3 file not found after download: ${mp3Path}`);
+                    reject(new Error('Downloaded file not found'));
+                }
+            });
+        } catch (err) {
+            logger.error(`YouTube download error: ${err.message}`);
+            reject(err);
+        }
+    });
+}
+
+// Check if URL is a YouTube link
+function isYouTubeUrl(str) {
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[a-zA-Z0-9_-]+/;
+    return youtubeRegex.test(str);
+}
+
+// Configure multer for song uploads
+const songStorage = multer.diskStorage({
+    destination: async (req, file, cb) => {
+        await ensureSongsDir();
+        cb(null, SONGS_DIR);
+    },
+    filename: (req, file, cb) => {
+        const uniqueId = crypto.randomUUID().slice(0, 8);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `${uniqueId}_${safeName}`);
+    }
+});
+
+const songUpload = multer({
+    storage: songStorage,
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'audio/mpeg' || file.originalname.toLowerCase().endsWith('.mp3')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only MP3 files are allowed'));
+        }
+    }
+});
+
+// Auth configuration
+const OWNER_ID = process.env.OWNER_ID;
+const OWNER_PASSWORD = process.env.OWNER_PASSWORD;
+
+// Session helper functions (MySQL-backed for persistence across restarts)
+async function getSession(token) {
+    if (!mysqlPool) {
+        logger.warn('⚠️ getSession called but MySQL pool not available');
+        return null;
+    }
+    try {
+        const [rows] = await mysqlPool.query(
+            'SELECT user_id, role, login_time FROM dashboard_sessions WHERE token = ?',
+            [token]
+        );
+        if (rows && rows.length > 0) {
+            const loginTime = rows[0].login_time;
+            return {
+                userId: rows[0].user_id,
+                role: rows[0].role,
+                loginTime: loginTime ? loginTime.toISOString() : new Date().toISOString()
+            };
+        }
+        return null;
+    } catch (error) {
+        logger.error('Error getting session from MySQL:', error.message);
+        return null;
+    }
+}
+
+// Clean up expired sessions (older than 30 days)
+async function cleanupExpiredSessions() {
+    if (!mysqlPool) return;
+    try {
+        const result = await mysqlPool.query(
+            'DELETE FROM dashboard_sessions WHERE login_time < DATE_SUB(NOW(), INTERVAL 30 DAY)'
+        );
+        if (result[0].affectedRows > 0) {
+            logger.info(`🧹 Cleaned up ${result[0].affectedRows} expired sessions`);
+        }
+    } catch (error) {
+        logger.error('Error cleaning up expired sessions:', error.message);
+    }
+}
+
+async function setSession(token, sessionData) {
+    if (!mysqlPool) return false;
+    try {
+        await mysqlPool.query(
+            'INSERT INTO dashboard_sessions (token, user_id, role, login_time) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), role = VALUES(role), login_time = VALUES(login_time)',
+            [token, sessionData.userId, sessionData.role, new Date(sessionData.loginTime)]
+        );
+        return true;
+    } catch (error) {
+        logger.error('Error saving session to MySQL:', error.message);
+        return false;
+    }
+}
+
+async function deleteSession(token) {
+    if (!mysqlPool) return false;
+    try {
+        await mysqlPool.query('DELETE FROM dashboard_sessions WHERE token = ?', [token]);
+        return true;
+    } catch (error) {
+        logger.error('Error deleting session from MySQL:', error.message);
+        return false;
+    }
+}
+
+async function deleteSessionsByUserId(userId) {
+    if (!mysqlPool) return false;
+    try {
+        await mysqlPool.query('DELETE FROM dashboard_sessions WHERE user_id = ?', [userId]);
+        return true;
+    } catch (error) {
+        logger.error('Error deleting sessions by user ID from MySQL:', error.message);
+        return false;
+    }
+}
+
+// Generate session token
+function generateSessionToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+// Remove keys from .env file (mutex-protected to prevent race conditions)
+async function removeEnvCredentials(keysToRemove) {
+    await envFileMutex.acquire();
+    try {
+        const envPath = path.resolve('.env');
+        let envContent = '';
+        
+        logger.info(`📝 removeEnvCredentials called to remove keys: ${keysToRemove.join(', ')}`);
+        
+        try {
+            envContent = await fs.readFile(envPath, 'utf-8');
+        } catch (readError) {
+            if (readError.code === 'ENOENT') {
+                logger.info('📝 .env file not found, nothing to remove');
+                return true;
+            } else {
+                logger.error(`⚠️ Cannot read .env file: ${readError.message}. Aborting.`);
+                return false;
+            }
+        }
+        
+        if (!envContent || envContent.trim().length < 5) {
+            logger.warn('⚠️ .env file appears empty or corrupted, skipping removal');
+            return false;
+        }
+        
+        const originalLength = envContent.length;
+        const lines = envContent.split('\n');
+        const filteredLines = lines.filter(line => {
+            const trimmed = line.trim();
+            return !keysToRemove.some(key => trimmed.startsWith(`${key}=`));
+        });
+        
+        const newContent = filteredLines.join('\n').trim();
+        
+        if (newContent.length === 0) {
+            logger.warn('⚠️ Filtered content would be empty, skipping .env write to prevent data loss');
+            return false;
+        }
+        
+        logger.info(`📝 After removal: ${newContent.length} chars (was ${originalLength}), remaining keys: ${newContent.split('\n').filter(l => l.includes('=')).map(l => l.split('=')[0]).join(', ')}`);
+        
+        await fs.writeFile(envPath, newContent + '\n', 'utf-8');
+        logger.info(`✅ Removed keys from .env: ${keysToRemove.join(', ')}`);
+        return true;
+    } catch (error) {
+        logger.error('Error removing .env credentials:', error.message);
+        return false;
+    } finally {
+        envFileMutex.release();
+    }
+}
+
+// Update .env file with new credentials (mutex-protected to prevent race conditions)
+async function updateEnvCredentials(credentials) {
+    await envFileMutex.acquire();
+    try {
+        const envPath = path.resolve('.env');
+        let envContent = '';
+        let originalLength = 0;
+        let fileExists = false;
+        
+        logger.info(`📝 updateEnvCredentials called with keys: ${Object.keys(credentials).join(', ')}`);
+        
+        try {
+            envContent = await fs.readFile(envPath, 'utf-8');
+            originalLength = envContent.length;
+            fileExists = true;
+            logger.info(`📝 Read .env file: ${originalLength} chars, ${envContent.split('\n').length} lines`);
+            logger.info(`📝 Current .env keys: ${envContent.split('\n').filter(l => l.includes('=')).map(l => l.split('=')[0]).join(', ')}`);
+        } catch (readError) {
+            if (readError.code === 'ENOENT') {
+                // File doesn't exist - this is okay, we'll create it
+                logger.info('📝 .env file not found, will create new one');
+            } else {
+                // File exists but we can't read it - abort to prevent data loss
+                logger.error(`⚠️ Cannot read .env file: ${readError.message}. Aborting to prevent data loss.`);
+                return false;
+            }
+        }
+        
+        for (const [key, value] of Object.entries(credentials)) {
+            const regex = new RegExp(`^${key}=.*$`, 'm');
+            if (regex.test(envContent)) {
+                envContent = envContent.replace(regex, `${key}=${value}`);
+            } else {
+                envContent += `\n${key}=${value}`;
+            }
+            // Also update process.env for current session
+            process.env[key] = value;
+        }
+        
+        const newContent = envContent.trim();
+        
+        logger.info(`📝 After update: ${newContent.length} chars, keys: ${newContent.split('\n').filter(l => l.includes('=')).map(l => l.split('=')[0]).join(', ')}`);
+        
+        // Safety check: don't write if result would be empty
+        if (newContent.length === 0) {
+            logger.warn('⚠️ Updated .env content would be empty, aborting write');
+            return false;
+        }
+        
+        // Safety check: if file existed and new content is significantly smaller, abort
+        if (fileExists && originalLength > 50 && newContent.length < originalLength * 0.5) {
+            logger.error(`⚠️ New .env content (${newContent.length} chars) is much smaller than original (${originalLength} chars). Aborting to prevent data loss.`);
+            return false;
+        }
+        
+        await fs.writeFile(envPath, newContent + '\n', 'utf-8');
+        logger.info(`✅ Environment credentials updated: ${Object.keys(credentials).join(', ')}`);
+        return true;
+    } catch (error) {
+        logger.error('Error updating .env credentials:', error.message);
+        return false;
+    } finally {
+        envFileMutex.release();
+    }
+}
+
+// Load moderators from file
+async function loadModerators() {
+    try {
+        const data = await fs.readFile(MODERATORS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            await fs.writeFile(MODERATORS_FILE, '[]', 'utf8');
+            return [];
+        }
+        logger.error('Error loading moderators:', error.message);
+        return [];
+    }
+}
+
+// Save moderators to file
+async function saveModerators(moderators) {
+    try {
+        await fs.writeFile(MODERATORS_FILE, JSON.stringify(moderators, null, 2), 'utf8');
+    } catch (error) {
+        logger.error('Error saving moderators:', error.message);
+    }
+}
+
+// Load activity logs from file
+async function loadActivityLogs() {
+    try {
+        const data = await fs.readFile(ACTIVITY_LOGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            await fs.writeFile(ACTIVITY_LOGS_FILE, '[]', 'utf8');
+            return [];
+        }
+        logger.error('Error loading activity logs:', error.message);
+        return [];
+    }
+}
+
+// Save activity logs to file
+async function saveActivityLogs(logs) {
+    try {
+        await fs.writeFile(ACTIVITY_LOGS_FILE, JSON.stringify(logs, null, 2), 'utf8');
+    } catch (error) {
+        logger.error('Error saving activity logs:', error.message);
+    }
+}
+
+// Log activity (for moderator actions)
+async function logActivity(userId, userRole, action, details) {
+    const logs = await loadActivityLogs();
+    const logEntry = {
+        id: crypto.randomUUID(),
+        userId,
+        userRole,
+        action,
+        details,
+        timestamp: new Date().toISOString()
+    };
+    logs.unshift(logEntry); // Add to beginning for newest first
+    // Keep only last 500 logs
+    if (logs.length > 500) {
+        logs.length = 500;
+    }
+    await saveActivityLogs(logs);
+    return logEntry;
+}
+
+// Auth middleware
+async function authMiddleware(req, res, next) {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+    
+    const session = await getSession(token);
+    if (!session) {
+        return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    }
+    
+    req.user = session;
+    next();
+}
+
+// Owner-only middleware
+function ownerOnly(req, res, next) {
+    if (req.user.role !== 'owner') {
+        return res.status(403).json({ success: false, message: 'Owner access required' });
+    }
+    next();
+}
+
+// Load environment variables from token.txt (uses mutex-protected updateEnvCredentials)
+(async () => {
+    if (!bot_ep || !bot_key) {
+        const tokenPath = path.resolve('token.txt');
+
+        try {
+            await fs.access(tokenPath);
+            const base64data = (await fs.readFile(tokenPath, 'utf-8')).trim();
+            
+            // Check if token.txt is empty
+            if (!base64data) {
+                console.warn('⚠️ token.txt is empty. Bot will continue without EP/KEY - waiting for authentication.');
+            } else {
+                const decoded = Buffer.from(base64data, 'base64').toString('utf-8');
+                const outer = JSON.parse(decoded);
+                const pyData = JSON.parse(outer.PY);
+
+                bot_ep = pyData.EP;
+                bot_key = pyData.KEY;
+
+                // Use mutex-protected updateEnvCredentials instead of fs.appendFile
+                const credentialsToAdd = {};
+                const envPath = path.resolve('.env');
+                let envContent = '';
+                try {
+                    envContent = await fs.readFile(envPath, 'utf-8');
+                } catch {
+                    // .env might not exist
+                }
+                
+                if (!envContent.includes('EP=')) credentialsToAdd.EP = bot_ep;
+                if (!envContent.includes('KEY=')) credentialsToAdd.KEY = bot_key;
+
+                if (Object.keys(credentialsToAdd).length > 0) {
+                    await updateEnvCredentials(credentialsToAdd);
+                    console.log('✅ Added EP and KEY to .env via mutex-protected function');
+                }
+
+                process.env.EP = bot_ep;
+                process.env.KEY = bot_key;
+            }
+
+        } catch (err) {
+            console.warn('⚠️ Failed to decode token.txt:', err.message);
+            console.warn('⚠️ Bot will continue without EP/KEY - waiting for authentication or token update.');
+        }
+    }
+
+    console.log('Club Code:', club_code);
+    console.log('Club Name:', club_name);
+    console.log('BOT UID:', my_uid);
+    console.log('Endpoint:', bot_ep || 'Not set');
+    console.log('Key:', bot_key || 'Not set');
+    console.log('Port:', PORT);
+})();
+
+const DEFAULT_SETTINGS = {
+    allowAvatars: true,
+    banLevel: 10,
+    allowGuestIds: false,
+    punishments: {
+        bannedPatterns: 'ban',
+        lowLevel: 'ban',
+        noGuestId: 'ban',
+        noAvatar: 'kick',
+        spamWords: 'kick'
+    }
+};
+
+// File paths
+const CONFIG_FILES = {
+    'admins': './admins.txt',
+    'spam-words': './spam.txt',
+    'banned-patterns': './banned_patterns.txt',
+    'exemptions': './exemptions.txt',
+    'loyal_members': './loyal_members.txt',
+    'settings': './settings.json',
+    'bot-config': './bot_configuration.json',
+    'tone-templates': './tone_templates.json',
+    'blacklist': './blacklist.txt',
+    'hitlist': './hitlist.txt'
+};
+
+const path_users = './users.json';
+const spamPath = "./spam.txt";
+const path_message_counter = './message_counter.json';
+const KICK_BAN_LOGS_FILE = './kick_ban_logs.json';
+const BLACKLIST_FILE = './blacklist.txt';
+const HITLIST_FILE = './hitlist.txt';
+
+// Load blacklist (comma-separated player IDs to ban)
+async function loadBlacklist() {
+    try {
+        const data = await fs.readFile(BLACKLIST_FILE, 'utf8');
+        return data.split(',').map(id => id.trim()).filter(id => id);
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            await fs.writeFile(BLACKLIST_FILE, '');
+        }
+        return [];
+    }
+}
+
+// Load hitlist (comma-separated player IDs to kick)
+async function loadHitlist() {
+    try {
+        const data = await fs.readFile(HITLIST_FILE, 'utf8');
+        return data.split(',').map(id => id.trim()).filter(id => id);
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            await fs.writeFile(HITLIST_FILE, '');
+        }
+        return [];
+    }
+}
+
+// Check if player is blacklisted (returns true if should ban)
+async function isBlacklisted(gc) {
+    const blacklist = await loadBlacklist();
+    return blacklist.includes(String(gc));
+}
+
+// Check if player is on hitlist (returns true if should kick)
+async function isOnHitlist(gc) {
+    const hitlist = await loadHitlist();
+    return hitlist.includes(String(gc));
+}
+
+// Feature toggle system
+const DEFAULT_FEATURE_TOGGLES = {
+    music: { enabled: true, label: 'Music', description: 'Song playback commands', commands: ['/song', '/play', '/pause', '/next', '/stop', '/rec'] },
+    dedications: { enabled: true, label: 'Dedications', description: 'Song dedication system', commands: ['/dedicate'] },
+    moderation: { enabled: true, label: 'Moderation', description: 'Moderation commands', commands: [] },
+    hitlist: { enabled: true, label: 'Hitlist', description: 'Auto-kick on join', commands: [] },
+    blacklist: { enabled: true, label: 'Blacklist', description: 'Auto-ban on join', commands: [] },
+    info_stats: { enabled: true, label: 'Info & Stats', description: 'Player info and leaderboard commands', commands: ['/wtop', '/mtop', '/whois', '/seen', '/member'] },
+    ai_voice: { enabled: true, label: 'AI / Voice', description: 'Voice AI mode', commands: ['/talk'] },
+    fun: { enabled: true, label: 'Fun', description: 'Secret messages and games', commands: ['/secret', '/read'] }
+};
+
+let featureToggles = JSON.parse(JSON.stringify(DEFAULT_FEATURE_TOGGLES));
+
+async function loadFeatureToggles() {
+    try {
+        const data = await fs.readFile(FEATURE_TOGGLES_FILE, 'utf8');
+        const saved = JSON.parse(data);
+        for (const key of Object.keys(DEFAULT_FEATURE_TOGGLES)) {
+            if (saved[key] !== undefined) {
+                featureToggles[key] = { ...DEFAULT_FEATURE_TOGGLES[key], enabled: saved[key].enabled };
+            }
+        }
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            await saveFeatureToggles();
+        }
+    }
+}
+
+async function saveFeatureToggles() {
+    try {
+        await fs.writeFile(FEATURE_TOGGLES_FILE, JSON.stringify(featureToggles, null, 2), 'utf8');
+    } catch (err) {
+        logger.error('Failed to save feature toggles:', err.message);
+    }
+}
+
+function isFeatureEnabled(featureKey) {
+    return featureToggles[featureKey]?.enabled !== false;
+}
+
+function getFeatureForCommand(cmd) {
+    const command = cmd.split(' ')[0].toLowerCase();
+    for (const [key, feature] of Object.entries(featureToggles)) {
+        if (feature.commands.includes(command)) {
+            return key;
+        }
+    }
+    return null;
+}
+
+function isCommandEnabled(cmd) {
+    const featureKey = getFeatureForCommand(cmd);
+    if (featureKey === null) return true;
+    return isFeatureEnabled(featureKey);
+}
+
+loadFeatureToggles();
+
+// Bot state management
+let botState = {
+    connected: false,
+    connecting: false,
+    ws: null,
+    clubCode: `${club_code}`,
+    clubName: `${club_name}`,
+    startTime: null,
+    stats: {
+        messagesProcessed: 0,
+        usersKicked: 0,
+        spamBlocked: 0
+    }
+};
+
+// Bot configuration
+let botConfig = {
+    admins: [],
+    spamWords: [],
+    bannedPatterns: [],
+    settings: null,
+    botConfiguration: null,
+    toneTemplates: null
+};
+
+// Game state variables
+let secretNumber = Math.floor(Math.random() * 100) + 1;
+let botMic = 0;
+let index_idx = 1;
+let mics = new Array(10).fill(null); // Will be updated from settings.json
+let onMic = false;
+let savedData = {};
+let clubAdmins = [];
+let pendingRemovals = [];
+let pendingBans = [];
+let pendingKicks = [];
+let pendingUnbans = [];
+let pendingLevelChecks = [];
+let banAttempts = {}; // Track ban attempts per UID to avoid infinite loops
+
+// Global mic join function (accessible from dedication system and other scopes)
+function joinMicGlobal(mic = 1) {
+    const join_mic = JSON.stringify({
+        RH: "CBC",
+        PU: "TMS",
+        SQ: null,
+        PY: JSON.stringify({
+            MN: mic,
+            TM: true
+        })
+    });
+    messageQueue.enqueue(join_mic);
+}
+
+// Global sendMessage function (accessible from dedication, secret messages, and other scopes)
+function sendMessageGlobal(tempMsg) {
+    messageQueue.enqueue(JSON.stringify({
+        RH: "CBC",
+        PU: "CM",
+        PY: JSON.stringify({
+            CID: `${club_code}`,
+            MG: `${tempMsg}`
+        }),
+        SQ: null,
+        EN: false
+    }), true);
+}
+
+// Global execute functions for queue processors (accessible from all scopes)
+function executeCheckLevel(UID) {
+    const message = JSON.stringify({
+        "RH": "CBC",
+        "PU": "GCP",
+        "PY": JSON.stringify({
+            "S": false,
+            "UID": `${UID}`
+        })
+    });
+    messageQueue.enqueue(message);
+    logger.info(`📊 Executed level check for UID: ${UID}`);
+}
+
+function executeBan(UID) {
+    if (!clubAdmins.includes(String(UID))) {
+        // Check ban attempts - skip if already tried 3+ times
+        if (!banAttempts[UID]) {
+            banAttempts[UID] = 0;
+        }
+        banAttempts[UID]++;
+        
+        if (banAttempts[UID] > 3) {
+            logger.info(`⏭️ Skipping ban for UID ${UID} - already attempted ${banAttempts[UID]} times`);
+            return;
+        }
+        
+        const message = JSON.stringify({
+            RH: "CBC",
+            PU: "KBU",
+            PY: JSON.stringify({
+                B: true,
+                CID: `${club_code}`,
+                UID: `${UID}`,
+                R: 3,
+                OTH: ""
+            })
+        });
+        messageQueue.enqueue(message);
+        logger.info(`🔨 Executed ban for UID: ${UID} (attempt ${banAttempts[UID]})`);
+    }
+}
+
+function executeUnban(UID) {
+    if (!clubAdmins.includes(String(UID))) {
+        const message = JSON.stringify({
+            "RH": "CBC",
+            "PU": "UU",
+            "SQ": null,
+            "PY": JSON.stringify({
+                "CID": `${club_code}`,
+                "UID": `${UID}`
+            })
+        });
+        messageQueue.enqueue(message);
+        logger.info(`🔓 Executed unban for UID: ${UID}`);
+    }
+}
+
+function executeKick(UID) {
+    if (!clubAdmins.includes(String(UID))) {
+        const message = JSON.stringify({
+            RH: "CBC",
+            PU: "KBU",
+            PY: JSON.stringify({
+                B: false,
+                CID: `${club_code}`,
+                UID: `${UID}`,
+                R: 3,
+                OTH: ""
+            })
+        });
+        messageQueue.enqueue(message);
+        logger.info(`👢 Executed kick for UID: ${UID}`);
+    }
+}
+
+// Session tracking - tracks when users join the club
+const activeSessions = new Map();
+
+// Get current date in Pakistani time (UTC+5)
+function getPakistaniDate() {
+    const now = new Date();
+    const pakistaniTime = new Date(now.getTime() + (5 * 60 * 60 * 1000));
+    return pakistaniTime.toISOString().split('T')[0];
+}
+
+// Get Pakistani time as Date object
+function getPakistaniTime() {
+    const now = new Date();
+    return new Date(now.getTime() + (5 * 60 * 60 * 1000));
+}
+
+// Get the last weekly reset time (Sunday 2:00 AM PKT)
+function getLastWeeklyResetTime() {
+    const pkt = getPakistaniTime();
+    const dayOfWeek = pkt.getUTCDay(); // 0 = Sunday
+    const hour = pkt.getUTCHours();
+    
+    // Calculate days since last Sunday
+    let daysSinceLastSunday = dayOfWeek;
+    
+    // If it's Sunday but before 2:00 AM PKT, the last reset was the previous Sunday
+    if (dayOfWeek === 0 && hour < 2) {
+        daysSinceLastSunday = 7;
+    }
+    
+    // Create the last reset date (Sunday 2:00 AM PKT)
+    const lastReset = new Date(pkt);
+    lastReset.setUTCDate(lastReset.getUTCDate() - daysSinceLastSunday);
+    // 2:00 AM PKT = 21:00 (9 PM) previous day UTC (PKT is UTC+5)
+    lastReset.setUTCHours(2 - 5, 0, 0, 0); // This will properly adjust to Saturday 21:00 UTC
+    
+    return lastReset.toISOString();
+}
+
+// Get the last monthly reset time (1st of month, 12:00 AM PKT)
+function getLastMonthlyResetTime() {
+    const pkt = getPakistaniTime();
+    const dayOfMonth = pkt.getUTCDate();
+    
+    let year = pkt.getUTCFullYear();
+    let month = pkt.getUTCMonth();
+    
+    // If it's not the 1st yet, use current month's 1st
+    // The reset happens at midnight on the 1st, so if we're past midnight on the 1st, we're in the new period
+    
+    // Create the last reset date (1st of month, 12:00 AM PKT = previous day 7:00 PM UTC)
+    const lastReset = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+    // Adjust for PKT (UTC+5) - midnight PKT is 7PM previous day UTC
+    lastReset.setUTCHours(-5);
+    
+    return lastReset.toISOString();
+}
+
+// Get the last daily reset time (12:00 AM PKT)
+function getLastDailyResetTime() {
+    const pkt = getPakistaniTime();
+    
+    // Create today's midnight in PKT
+    const lastReset = new Date(Date.UTC(
+        pkt.getUTCFullYear(),
+        pkt.getUTCMonth(),
+        pkt.getUTCDate(),
+        0, 0, 0, 0
+    ));
+    // Adjust for PKT (UTC+5) - midnight PKT is 7PM previous day UTC
+    lastReset.setUTCHours(-5);
+    
+    return lastReset.toISOString();
+}
+
+// Get current day identifier for tracking (based on midnight PKT reset)
+function getCurrentDay() {
+    return getLastDailyResetTime();
+}
+
+// Get current week identifier for tracking (based on Sunday 2:00 AM PKT reset)
+function getCurrentWeek() {
+    return getLastWeeklyResetTime();
+}
+
+// Get current month identifier for tracking (based on 1st of month 2:00 AM PKT reset)
+function getCurrentMonth() {
+    return getLastMonthlyResetTime();
+}
+
+// Format seconds to human readable duration
+function formatDuration(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+    }
+    return `${secs}s`;
+}
+
+// Secret Messages System
+async function loadSecretMessages() {
+    try {
+        const data = await fs.readFile(SECRET_MESSAGES_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch {
+        return [];
+    }
+}
+
+async function saveSecretMessages(messages) {
+    await fs.writeFile(SECRET_MESSAGES_FILE, JSON.stringify(messages, null, 2), 'utf8');
+}
+
+async function checkSecretMessages(uid) {
+    const gc = findPlayerID(uid);
+    if (!gc) return;
+    
+    const messages = await loadSecretMessages();
+    const pending = messages.filter(m => m.targetGC === gc && m.status === 'pending');
+    
+    if (pending.length > 0) {
+        const count = pending.length;
+        sendMessageGlobal(`${getName(gc)} you have ${count} secret message${count > 1 ? 's' : ''}! Type /read to see ${count > 1 ? 'them' : 'it'}.`);
+        logger.info(`📨 Notified ${gc} about ${count} pending secret message(s)`);
+    }
+}
+
+// Handle user joining the club
+function handleUserJoin(uid) {
+    activeSessions.set(uid, Date.now());
+    logger.info(`👋 User joined, tracking session: ${uid.substring(0, 16)}...`);
+    checkSecretMessages(uid).catch(err => logger.error(`Secret msg check error: ${err.message}`));
+}
+
+// Handle user leaving the club and update their time
+async function handleUserLeave(uid) {
+    const joinTime = activeSessions.get(uid);
+    if (!joinTime) {
+        logger.warn(`⚠️ No join time found for user: ${uid.substring(0, 16)}...`);
+        return;
+    }
+
+    const sessionDuration = Math.floor((Date.now() - joinTime) / 1000);
+    activeSessions.delete(uid);
+
+    await updateMemberTime(uid, sessionDuration);
+    logger.info(`👋 User left after ${formatDuration(sessionDuration)}: ${uid.substring(0, 16)}...`);
+}
+
+// Update member's time tracking data
+async function updateMemberTime(uid, sessionSeconds) {
+    try {
+        await membersFileLock.withLock(async () => {
+            const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+            const members = JSON.parse(data);
+            
+            const memberIndex = members.findIndex(m => m.UID === uid);
+            if (memberIndex === -1) {
+                logger.warn(`⚠️ Member not found for time update: ${uid.substring(0, 16)}...`);
+                return;
+            }
+
+            const member = members[memberIndex];
+            const currentWeek = getCurrentWeek();
+            const currentMonth = getCurrentMonth();
+            const currentDay = getCurrentDay();
+
+            // Initialize time tracking if not exists
+            if (!member.timeTracking) {
+                member.timeTracking = {
+                    totalSeconds: 0,
+                    dailySeconds: 0,
+                    weeklySeconds: 0,
+                    monthlySeconds: 0,
+                    lastDayReset: currentDay,
+                    lastWeekReset: currentWeek,
+                    lastMonthReset: currentMonth
+                };
+            }
+
+            // Ensure dailySeconds and lastDayReset exist (for existing members)
+            if (member.timeTracking.dailySeconds === undefined) {
+                member.timeTracking.dailySeconds = 0;
+                member.timeTracking.lastDayReset = currentDay;
+            }
+
+            // Reset daily if new day
+            if (member.timeTracking.lastDayReset !== currentDay) {
+                member.timeTracking.dailySeconds = 0;
+                member.timeTracking.lastDayReset = currentDay;
+            }
+
+            // Reset weekly if new week
+            if (member.timeTracking.lastWeekReset !== currentWeek) {
+                member.timeTracking.weeklySeconds = 0;
+                member.timeTracking.lastWeekReset = currentWeek;
+            }
+
+            // Reset monthly if new month
+            if (member.timeTracking.lastMonthReset !== currentMonth) {
+                member.timeTracking.monthlySeconds = 0;
+                member.timeTracking.lastMonthReset = currentMonth;
+            }
+
+            // Add session time
+            member.timeTracking.totalSeconds += sessionSeconds;
+            member.timeTracking.dailySeconds += sessionSeconds;
+            member.timeTracking.weeklySeconds += sessionSeconds;
+            member.timeTracking.monthlySeconds += sessionSeconds;
+
+            members[memberIndex] = member;
+            
+            // Atomic write: write to temp file first, then rename
+            const tempFile = MEMBERS_FILE + '.tmp';
+            await fs.writeFile(tempFile, JSON.stringify(members, null, 2));
+            await fs.rename(tempFile, MEMBERS_FILE);
+            
+            logger.info(`⏱️ Updated time for ${member.NM}: +${formatDuration(sessionSeconds)} (Weekly: ${formatDuration(member.timeTracking.weeklySeconds)}, Monthly: ${formatDuration(member.timeTracking.monthlySeconds)})`);
+        });
+    } catch (error) {
+        logger.error('Error updating member time: ' + error.message);
+    }
+}
+
+// Get member time statistics
+function getMemberTimeStats(member) {
+    const currentDay = getCurrentDay();
+    const currentWeek = getCurrentWeek();
+    const currentMonth = getCurrentMonth();
+    
+    if (!member.timeTracking) {
+        return { dailyHours: 0, weeklyHours: 0, monthlyHours: 0, totalHours: 0 };
+    }
+
+    let dailySeconds = member.timeTracking.dailySeconds || 0;
+    let weeklySeconds = member.timeTracking.weeklySeconds || 0;
+    let monthlySeconds = member.timeTracking.monthlySeconds || 0;
+    const totalSeconds = member.timeTracking.totalSeconds || 0;
+
+    // Check if we need to reset (for display purposes)
+    if (member.timeTracking.lastDayReset !== currentDay) {
+        dailySeconds = 0;
+    }
+    if (member.timeTracking.lastWeekReset !== currentWeek) {
+        weeklySeconds = 0;
+    }
+    if (member.timeTracking.lastMonthReset !== currentMonth) {
+        monthlySeconds = 0;
+    }
+
+    return {
+        dailyHours: Math.round((dailySeconds / 3600) * 100) / 100,
+        weeklyHours: Math.round((weeklySeconds / 3600) * 100) / 100,
+        monthlyHours: Math.round((monthlySeconds / 3600) * 100) / 100,
+        totalHours: Math.round((totalSeconds / 3600) * 100) / 100
+    };
+}
+
+// Message counter state
+let messageCounter = { count: 0, date: getPakistaniDate() };
+
+// Load message counter from file
+async function loadMessageCounter() {
+    try {
+        const data = await fs.readFile(path_message_counter, 'utf8');
+        messageCounter = JSON.parse(data);
+        
+        // Reset if it's a new day in Pakistani time
+        const today = getPakistaniDate();
+        if (messageCounter.date !== today) {
+            messageCounter = { count: 0, date: today };
+            await saveMessageCounter();
+            logger.info('📊 Message counter reset for new day (PKT)');
+        }
+        
+        logger.info(`📊 Message counter loaded: ${messageCounter.count} messages today`);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            messageCounter = { count: 0, date: getPakistaniDate() };
+            await saveMessageCounter();
+            logger.info('📊 Message counter initialized');
+        } else {
+            logger.error('Error loading message counter: ' + error.message);
+        }
+    }
+}
+
+// Save message counter to file
+async function saveMessageCounter() {
+    try {
+        await fs.writeFile(path_message_counter, JSON.stringify(messageCounter, null, 2));
+    } catch (error) {
+        logger.error('Error saving message counter: ' + error.message);
+    }
+}
+
+// Increment message counter (called when a message is received)
+async function incrementMessageCount() {
+    const today = getPakistaniDate();
+    
+    // Reset if it's a new day
+    if (messageCounter.date !== today) {
+        messageCounter = { count: 0, date: today };
+        logger.info('📊 Message counter reset for new day (PKT)');
+    }
+    
+    messageCounter.count++;
+    await saveMessageCounter();
+}
+
+// Get current message count
+function getMessageCount() {
+    const today = getPakistaniDate();
+    if (messageCounter.date !== today) {
+        return { count: 0, date: today };
+    }
+    return messageCounter;
+}
+
+let openai = new OpenAI({
+    apiKey: process.env.OPENAI
+});
+
+// Reinitialize OpenAI
+function reinitializeOpenAI(apiKey) {
+    try {
+        openai = new OpenAI({
+            apiKey: apiKey
+        });
+        logger.info('✅ OpenAI client reinitialized with new API key');
+        return true;
+    } catch (error) {
+        logger.error('❌ Failed to reinitialize OpenAI client:', error.message);
+        return false;
+    }
+}
+
+// Initialize MySQL
+async function initializeMySQL() {
+    let retries = 3;
+    let lastError;
+
+    while (retries > 0) {
+        try {
+            mysqlPool = mysql.createPool(MYSQL_CONFIG);
+            const connection = await mysqlPool.getConnection();
+            logger.info(`✅ MySQL connected successfully to ${MYSQL_CONFIG.host}`);
+
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS socket_status (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    bot_uid VARCHAR(255) NOT NULL,
+                    club_code VARCHAR(255) NOT NULL,
+                    club_name VARCHAR(500) NOT NULL,
+                    status ENUM('connected', 'disconnected', 'error') NOT NULL,
+                    message TEXT,
+                    ip_address VARCHAR(45),
+                    last_connected DATETIME,
+                    last_disconnected DATETIME,
+                    last_error DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    connection_count INT DEFAULT 1,
+                    disconnection_count INT DEFAULT 0,
+                    error_count INT DEFAULT 0,
+                    UNIQUE KEY unique_bot_club (bot_uid, club_code),
+                    INDEX idx_status (status),
+                    INDEX idx_updated_at (updated_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            `);
+
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS socket_status_history (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    bot_uid VARCHAR(255) NOT NULL,
+                    club_code VARCHAR(255) NOT NULL,
+                    club_name VARCHAR(500) NOT NULL,
+                    status ENUM('connected', 'disconnected', 'error') NOT NULL,
+                    message TEXT,
+                    ip_address VARCHAR(45),
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_bot_uid (bot_uid),
+                    INDEX idx_club_code (club_code),
+                    INDEX idx_timestamp (timestamp),
+                    INDEX idx_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            `);
+
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS dashboard_sessions (
+                    token VARCHAR(64) PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL,
+                    role VARCHAR(50) NOT NULL,
+                    login_time DATETIME NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id),
+                    INDEX idx_login_time (login_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            `);
+
+            connection.release();
+            logger.info('✅ Socket status and session tables ready');
+            return;
+
+        } catch (error) {
+            lastError = error;
+            retries--;
+            logger.error(`❌ MySQL connection attempt failed (${3 - retries}/3):`, error.message);
+
+            if (retries > 0) {
+                logger.info(`⏳ Retrying in 5 seconds...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+    }
+
+    logger.error('❌ MySQL initialization failed after 3 attempts:', lastError?.message);
+    logger.warn('⚠️ Bot will continue without MySQL logging');
+    mysqlPool = null;
+}
+
+// Log socket status
+async function logSocketStatus(status, message = null) {
+    if (!mysqlPool) {
+        logger.warn('⚠️ MySQL pool not available, skipping status log');
+        return;
+    }
+
+    try {
+        const networkInterfaces = os.networkInterfaces();
+        let ipAddress = null;
+
+        for (const interfaceName in networkInterfaces) {
+            const addresses = networkInterfaces[interfaceName];
+            for (const addr of addresses) {
+                if (addr.family === 'IPv4' && !addr.internal) {
+                    ipAddress = addr.address;
+                    break;
+                }
+            }
+            if (ipAddress) break;
+        }
+
+        const now = new Date();
+        const uid = my_uid || 'unknown';
+        const code = club_code || 'unknown';
+        const name = club_name || 'unknown';
+
+        let statusColumn = '';
+        let counterIncrement = '';
+
+        switch (status) {
+            case 'connected':
+                statusColumn = 'last_connected = VALUES(last_connected)';
+                counterIncrement = 'connection_count = connection_count + 1';
+                break;
+            case 'disconnected':
+                statusColumn = 'last_disconnected = VALUES(last_disconnected)';
+                counterIncrement = 'disconnection_count = disconnection_count + 1';
+                break;
+            case 'error':
+                statusColumn = 'last_error = VALUES(last_error)';
+                counterIncrement = 'error_count = error_count + 1';
+                break;
+        }
+
+        await mysqlPool.query(`
+            INSERT INTO socket_status 
+            (bot_uid, club_code, club_name, status, message, ip_address, last_${status}, ${status === 'connected' ? 'connection_count' : status === 'disconnected' ? 'disconnection_count' : 'error_count'}) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            ON DUPLICATE KEY UPDATE
+                club_name = VALUES(club_name),
+                status = VALUES(status),
+                message = VALUES(message),
+                ip_address = VALUES(ip_address),
+                ${statusColumn},
+                ${counterIncrement}
+        `, [uid, code, name, status, message, ipAddress, now]);
+
+        await mysqlPool.query(`
+            INSERT INTO socket_status_history 
+            (bot_uid, club_code, club_name, status, message, ip_address) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        `, [uid, code, name, status, message, ipAddress]);
+
+        logger.info(`📊 Socket status updated: ${status} for club "${name}" (${code})`);
+    } catch (error) {
+        logger.error('❌ Failed to log socket status:', error.message);
+    }
+}
+
+// Utility functions
+async function loadIcicUsage() {
+    try {
+        const data = await fs.readFile(ICIC_USAGE_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            const defaultUsage = {
+                lastUsed: null,
+                usedBy: null,
+                count: 0
+            };
+            await fs.writeFile(ICIC_USAGE_FILE, JSON.stringify(defaultUsage, null, 2), 'utf8');
+            return defaultUsage;
+        }
+        logger.error('Error loading icic usage:', error.message);
+        return { lastUsed: null, usedBy: null, count: 0 };
+    }
+}
+
+async function updateIcicUsage(userId) {
+    try {
+        const usage = {
+            lastUsed: new Date().toISOString(),
+            usedBy: userId,
+            count: (await loadIcicUsage()).count + 1,
+            timestamp: Date.now()
+        };
+        await fs.writeFile(ICIC_USAGE_FILE, JSON.stringify(usage, null, 2), 'utf8');
+        return true;
+    } catch (error) {
+        logger.error('Error updating icic usage:', error.message);
+        return false;
+    }
+}
+
+function isToday(dateString) {
+    if (!dateString) return false;
+    const lastUsed = new Date(dateString);
+    const today = new Date();
+    return lastUsed.getFullYear() === today.getFullYear() &&
+        lastUsed.getMonth() === today.getMonth() &&
+        lastUsed.getDate() === today.getDate();
+}
+
+function getTimeUntilMidnight() {
+    const now = new Date();
+    const midnight = new Date();
+    midnight.setHours(24, 0, 0, 0);
+    const diff = midnight - now;
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours > 0) {
+        return `${hours} hour${hours > 1 ? 's' : ''} and ${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    } else {
+        return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    }
+}
+
+async function saveClubMembers(jsonMessage) {
+    try {
+        if (jsonMessage?.PY?.ML !== undefined) {
+            await membersFileLock.withLock(async () => {
+                const newMembers = jsonMessage.PY.ML;
+                
+                // Load existing members to preserve timeTracking data
+                let existingMembers = [];
+                try {
+                    const existingData = await fs.readFile(MEMBERS_FILE, 'utf8');
+                    existingMembers = JSON.parse(existingData);
+                    if (!Array.isArray(existingMembers)) existingMembers = [];
+                } catch (e) {
+                    existingMembers = [];
+                }
+                
+                // Create a map of existing members with their timeTracking data
+                const existingTimeTracking = {};
+                for (const member of existingMembers) {
+                    if (member.UID && member.timeTracking) {
+                        existingTimeTracking[member.UID] = member.timeTracking;
+                    }
+                }
+                
+                // Merge timeTracking into new members
+                const mergedMembers = newMembers.map(member => {
+                    if (member.UID && existingTimeTracking[member.UID]) {
+                        return {
+                            ...member,
+                            timeTracking: existingTimeTracking[member.UID]
+                        };
+                    }
+                    return member;
+                });
+                
+                // Atomic write: write to temp file first, then rename
+                const tempFile = MEMBERS_FILE + '.tmp';
+                const jsonString = JSON.stringify(mergedMembers, null, 2);
+                await fs.writeFile(tempFile, jsonString, 'utf8');
+                await fs.rename(tempFile, MEMBERS_FILE);
+                console.log('Club members saved successfully (timeTracking preserved)!');
+            });
+        } else {
+            console.log('ML property not found in jsonMessage.PY');
+        }
+    } catch (error) {
+        console.error('Error saving club members:', error);
+    }
+}
+
+async function saveGifterList(jsonMessage) {
+    try {
+        if (!jsonMessage?.PY?.CTP) {
+            console.log('⚠️ No CTP property found in jsonMessage.PY');
+            return;
+        }
+
+        let existingData = [];
+        try {
+            const fileContent = await fs.readFile("gifters_club_data.json", 'utf8');
+            existingData = JSON.parse(fileContent);
+            if (!Array.isArray(existingData)) existingData = [];
+        } catch {
+            existingData = [];
+        }
+
+        const existingGCs = new Set(existingData.map(item => item.CID));
+        const newEntries = jsonMessage.PY.CTP.filter(item => !existingGCs.has(item.CID));
+
+        if (newEntries.length === 0) {
+            console.log('ℹ️ No new unique CTP entries to add.');
+            return;
+        }
+
+        const updatedData = [...existingData, ...newEntries];
+        const jsonString = JSON.stringify(updatedData, null, 2);
+        await fs.writeFile("gifters_club_data.json", jsonString, 'utf8');
+        console.log(`✅ Added ${newEntries.length} new entries. Total: ${updatedData.length}`);
+    } catch (error) {
+        console.error('❌ Error saving gifter list:', error);
+    }
+}
+
+async function createDefaultSettings() {
+    const defaultSettings = {
+        allowAvatars: true,
+        banLevel: 10,
+        allowGuestIds: false,
+        enableLevelBan: true,
+        micCount: 10,
+        punishments: {
+            bannedPatterns: 'ban',
+            lowLevel: 'ban',
+            noGuestId: 'ban',
+            noAvatar: 'kick',
+            spamWords: 'kick'
+        },
+        createdAt: new Date().toISOString()
+    };
+
+    try {
+        await fs.writeFile(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2), 'utf8');
+        logger.info('Created default settings.json file');
+        return defaultSettings;
+    } catch (error) {
+        logger.error('Error creating default settings.json:', error.message);
+        return null;
+    }
+}
+
+function formatWelcomeMessage(userName) {
+    const welcomeTemplate = botConfig.botConfiguration?.welcomeMessage || '✨️˚.⭒Wᴇʟᴄᴏᴍᴇ {name}˚✨️';
+    return welcomeTemplate.replace('{name}', userName);
+}
+
+async function loadSettings() {
+    try {
+        const data = await fs.readFile(SETTINGS_FILE, 'utf8');
+        const settings = JSON.parse(data);
+        logger.info('Settings loaded from settings.json');
+        return settings;
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.info('No settings.json found, creating default file');
+            return await createDefaultSettings();
+        } else {
+            logger.error('Error reading settings.json:', error.message);
+            return await createDefaultSettings();
+        }
+    }
+}
+
+// ====================
+// API ENDPOINTS
+// ====================
+
+// ==================== WINDOWS APP ENDPOINTS ====================
+
+// Get token.txt content for Windows app
+app.get('/api/jack/get-token', async (req, res) => {
+    try {
+        const tokenPath = path.join(__dirname, 'token.txt');
+        const tokenContent = await fs.readFile(tokenPath, 'utf8');
+        res.json({ success: true, token: tokenContent.trim() });
+    } catch (error) {
+        res.json({ success: false, message: 'Token file not found' });
+    }
+});
+
+// Get authMessage for Windows app
+app.get('/api/jack/get-auth-message', (req, res) => {
+    if (authMessage) {
+        res.json({ success: true, authMessage: authMessage });
+    } else {
+        res.json({ success: false, message: 'Auth message not available yet' });
+    }
+});
+
+// ==================== AUTH ENDPOINTS ====================
+
+// Login endpoint
+app.post('/api/jack/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+            return res.json({ success: false, message: 'Username and password are required' });
+        }
+        
+        // Check if owner
+        if (username === OWNER_ID && password === OWNER_PASSWORD) {
+            const token = generateSessionToken();
+            await setSession(token, {
+                userId: username,
+                role: 'owner',
+                loginTime: new Date().toISOString()
+            });
+            
+            await logActivity(username, 'owner', 'LOGIN', { message: 'Owner logged in' });
+            
+            return res.json({
+                success: true,
+                data: {
+                    token,
+                    user: { id: username, role: 'owner' }
+                }
+            });
+        }
+        
+        // Check if moderator
+        const moderators = await loadModerators();
+        const moderator = moderators.find(m => m.username === username);
+        
+        if (moderator) {
+            // Verify password with bcrypt (handles both hashed and legacy plaintext)
+            const isValidPassword = moderator.passwordHash 
+                ? await bcrypt.compare(password, moderator.passwordHash)
+                : moderator.password === password;
+            
+            if (!isValidPassword) {
+                return res.status(401).json({ success: false, message: 'Invalid credentials' });
+            }
+            const token = generateSessionToken();
+            await setSession(token, {
+                userId: username,
+                role: 'moderator',
+                loginTime: new Date().toISOString()
+            });
+            
+            await logActivity(username, 'moderator', 'LOGIN', { message: 'Moderator logged in' });
+            
+            return res.json({
+                success: true,
+                data: {
+                    token,
+                    user: { id: username, role: 'moderator' }
+                }
+            });
+        }
+        
+        return res.json({ success: false, message: 'Invalid credentials' });
+    } catch (error) {
+        logger.error('Login error:', error.message);
+        res.json({ success: false, message: 'Login failed' });
+    }
+});
+
+// Logout endpoint
+app.post('/api/jack/logout', authMiddleware, async (req, res) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+        
+        await logActivity(req.user.userId, req.user.role, 'LOGOUT', { message: 'User logged out' });
+        
+        await deleteSession(token);
+        res.json({ success: true, message: 'Logged out successfully' });
+    } catch (error) {
+        res.json({ success: false, message: 'Logout failed' });
+    }
+});
+
+// Check session endpoint
+app.get('/api/jack/session', authMiddleware, (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            user: {
+                id: req.user.userId,
+                role: req.user.role
+            }
+        }
+    });
+});
+
+// ==================== MODERATOR MANAGEMENT (Owner Only) ====================
+
+// Get all moderators
+app.get('/api/jack/moderators', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const moderators = await loadModerators();
+        // Don't send passwords
+        const safeModerators = moderators.map(m => ({
+            id: m.id,
+            username: m.username,
+            createdAt: m.createdAt
+        }));
+        res.json({ success: true, data: safeModerators });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Create moderator
+app.post('/api/jack/moderators', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+            return res.json({ success: false, message: 'Username and password are required' });
+        }
+        
+        if (password.length < 4) {
+            return res.json({ success: false, message: 'Password must be at least 4 characters' });
+        }
+        
+        if (username === OWNER_ID) {
+            return res.json({ success: false, message: 'Cannot use owner username' });
+        }
+        
+        const moderators = await loadModerators();
+        
+        if (moderators.find(m => m.username === username)) {
+            return res.json({ success: false, message: 'Username already exists' });
+        }
+        
+        // Hash password with bcrypt (10 rounds of salting)
+        const passwordHash = await bcrypt.hash(password, 10);
+        
+        const newModerator = {
+            id: crypto.randomUUID(),
+            username,
+            passwordHash,
+            createdAt: new Date().toISOString()
+        };
+        
+        moderators.push(newModerator);
+        await saveModerators(moderators);
+        
+        await logActivity(req.user.userId, 'owner', 'CREATE_MODERATOR', { 
+            moderatorUsername: username 
+        });
+        
+        res.json({
+            success: true,
+            message: 'Moderator created successfully',
+            data: { id: newModerator.id, username: newModerator.username }
+        });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Delete moderator
+app.delete('/api/jack/moderators/:id', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const moderators = await loadModerators();
+        const moderator = moderators.find(m => m.id === id);
+        
+        if (!moderator) {
+            return res.json({ success: false, message: 'Moderator not found' });
+        }
+        
+        const filteredModerators = moderators.filter(m => m.id !== id);
+        await saveModerators(filteredModerators);
+        
+        // Invalidate any sessions for this moderator
+        await deleteSessionsByUserId(moderator.username);
+        
+        await logActivity(req.user.userId, 'owner', 'DELETE_MODERATOR', { 
+            moderatorUsername: moderator.username 
+        });
+        
+        res.json({ success: true, message: 'Moderator deleted successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// ==================== ACTIVITY LOGS (Owner Only) ====================
+
+app.get('/api/jack/activity-logs', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const logs = await loadActivityLogs();
+        
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedLogs = logs.slice(startIndex, endIndex);
+        
+        res.json({
+            success: true,
+            data: {
+                logs: paginatedLogs,
+                pagination: {
+                    page,
+                    limit,
+                    total: logs.length,
+                    totalPages: Math.ceil(logs.length / limit)
+                }
+            }
+        });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// ==================== EXISTING ENDPOINTS ====================
+
+app.get('/api/jack/auth-status', (req, res) => {
+    res.json({
+        success: true,
+        authRequired: authRequired,
+        connected: botState.connected,
+        authMessage: authMessage
+    });
+});
+
+app.get('/api/jack/message-count', (req, res) => {
+    const count = getMessageCount();
+    res.json({
+        success: true,
+        data: count
+    });
+});
+
+app.get('/api/jack/club-info', (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            clubName: club_name || 'Not Set',
+            clubCode: club_code || 'Not Set',
+            botUid: my_uid || 'Not Set'
+        }
+    });
+});
+
+app.post('/api/jack/update-bot-uid', async (req, res) => {
+    try {
+        const { botUid, password } = req.body;
+        
+        // Password protection for sensitive operation
+        const DEVELOPER_PASSWORD = 'aa00aa00';
+        if (password !== DEVELOPER_PASSWORD) {
+            return res.json({ success: false, message: 'Invalid password' });
+        }
+        
+        if (!botUid || typeof botUid !== 'string' || botUid.trim() === '') {
+            return res.json({ success: false, message: 'Bot UID is required' });
+        }
+
+        const newBotUid = botUid.trim();
+        
+        // Update in memory
+        my_uid = newBotUid;
+        process.env.BOT_UID = newBotUid;
+        
+        // Update .env file using mutex-protected function
+        await updateEnvCredentials({ BOT_UID: newBotUid });
+        logger.info(`✅ Bot UID updated to: ${newBotUid}`);
+        
+        res.json({ 
+            success: true, 
+            message: 'Bot UID updated successfully',
+            data: { botUid: newBotUid }
+        });
+    } catch (error) {
+        logger.error('Error updating Bot UID:', error.message);
+        res.json({ success: false, message: error.message || 'Failed to update Bot UID' });
+    }
+});
+
+app.get('/api/jack/tone-templates', async (req, res) => {
+    try {
+        const data = await fs.readFile('./tone_templates.json', 'utf8');
+        const templates = JSON.parse(data);
+        const toneList = Object.keys(templates.tones || {});
+
+        res.json({
+            success: true,
+            data: {
+                tones: toneList,
+                templates: templates.tones
+            }
+        });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({
+                success: true,
+                data: {
+                    tones: ["upbeat", "sarcastic", "wise", "energetic", "chill", "phuppo", "gangster", "party"],
+                    templates: {}
+                }
+            });
+        } else {
+            res.json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+});
+
+app.get('/api/jack/tone-templates/:toneName', async (req, res) => {
+    try {
+        const { toneName } = req.params;
+        const data = await fs.readFile('./tone_templates.json', 'utf8');
+        const templates = JSON.parse(data);
+
+        if (templates.tones[toneName]) {
+            res.json({
+                success: true,
+                data: {
+                    name: toneName,
+                    template: templates.tones[toneName]
+                }
+            });
+        } else {
+            res.json({
+                success: false,
+                message: 'Tone not found'
+            });
+        }
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/openai-key', async (req, res) => {
+    try {
+        const key = process.env.OPENAI || '';
+        res.json({
+            success: true,
+            data: {
+                key: key
+            }
+        });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/update-openai-key', async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+
+        if (!apiKey || typeof apiKey !== 'string') {
+            return res.json({
+                success: false,
+                message: 'API key is required'
+            });
+        }
+
+        if (!apiKey.startsWith('sk-')) {
+            return res.json({
+                success: false,
+                message: 'Invalid OpenAI API key format. Key should start with "sk-"'
+            });
+        }
+
+        // Update .env file using mutex-protected function
+        const success = await updateEnvCredentials({ OPENAI: apiKey });
+        if (!success) {
+            return res.json({
+                success: false,
+                message: 'Failed to update .env file'
+            });
+        }
+        process.env.OPENAI = apiKey;
+
+        const reinitialized = reinitializeOpenAI(apiKey);
+
+        if (!reinitialized) {
+            return res.json({
+                success: false,
+                message: 'API key saved to .env but failed to reinitialize OpenAI client. Please restart the bot.'
+            });
+        }
+
+        logger.info('✅ OpenAI API key updated in .env and client reinitialized');
+
+        res.json({
+            success: true,
+            message: 'OpenAI API key updated successfully and applied immediately. No restart needed.'
+        });
+
+    } catch (error) {
+        logger.error('❌ Error updating OpenAI key:', error.message);
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.post('/api/jack/clear-credentials', async (req, res) => {
+    try {
+        // Use mutex-protected function to remove EP and KEY
+        const success = await removeEnvCredentials(['EP', 'KEY']);
+        
+        if (!success) {
+            return res.json({
+                success: false,
+                message: 'Failed to clear credentials from .env file'
+            });
+        }
+
+        delete process.env.EP;
+        delete process.env.KEY;
+        bot_ep = null;
+        bot_key = null;
+
+        logger.info('✅ EP and KEY cleared from .env');
+
+        res.json({
+            success: true,
+            message: 'Credentials cleared successfully. Please restart the bot.'
+        });
+
+    } catch (error) {
+        logger.error('❌ Error clearing credentials:', error.message);
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.post('/api/jack/authenticate', async (req, res) => {
+    try {
+        const { authData } = req.body;
+
+        if (!authData) {
+            return res.json({
+                success: false,
+                message: 'Authentication data is required'
+            });
+        }
+
+        if (!authRequired || !botState.ws || botState.ws.readyState !== WebSocket.OPEN) {
+            return res.json({
+                success: false,
+                message: !authRequired ? 'No authentication pending' : 'WebSocket not connected'
+            });
+        }
+
+        try {
+            const decoded = Buffer.from(authData, 'base64').toString('utf-8');
+            JSON.parse(decoded);
+        } catch (err) {
+            return res.json({
+                success: false,
+                message: 'Invalid authentication data format'
+            });
+        }
+
+        botState.ws.send(authData);
+        console.log(authData);
+
+        authRequired = false;
+        authMessage = null;
+
+        logger.info('✅ Authentication credentials submitted');
+
+        res.json({
+            success: true,
+            message: 'Authentication submitted successfully'
+        });
+
+    } catch (error) {
+        logger.error('❌ Error during authentication:', error.message);
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.post('/api/jack/tone-templates', async (req, res) => {
+    try {
+        const { toneName, template, isEdit } = req.body;
+
+        if (!toneName || !template) {
+            return res.json({
+                success: false,
+                message: 'Tone name and template are required'
+            });
+        }
+
+        if (!/^[a-zA-Z0-9_]+$/.test(toneName)) {
+            return res.json({
+                success: false,
+                message: 'Tone name can only contain letters, numbers, and underscores'
+            });
+        }
+
+        let templates = { tones: {} };
+
+        try {
+            const data = await fs.readFile('./tone_templates.json', 'utf8');
+            templates = JSON.parse(data);
+        } catch (error) {
+            // File doesn't exist
+        }
+
+        if (templates.tones[toneName] && !isEdit) {
+            return res.json({
+                success: false,
+                message: 'Tone already exists. Use edit mode to update.'
+            });
+        }
+
+        templates.tones[toneName] = template;
+        botConfig.toneTemplates = templates;
+
+        await fs.writeFile('./tone_templates.json', JSON.stringify(templates, null, 2), 'utf8');
+        logger.info(`Tone template ${isEdit ? 'updated' : 'added'}: ${toneName}`);
+
+        res.json({
+            success: true,
+            message: `Tone ${isEdit ? 'updated' : 'added'} successfully`
+        });
+
+    } catch (error) {
+        logger.error('Error saving tone template:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.delete('/api/jack/tone-templates/:toneName', async (req, res) => {
+    try {
+        const { toneName } = req.params;
+        const data = await fs.readFile('./tone_templates.json', 'utf8');
+        const templates = JSON.parse(data);
+
+        if (!templates.tones[toneName]) {
+            return res.json({
+                success: false,
+                message: 'Tone not found'
+            });
+        }
+
+        delete templates.tones[toneName];
+        await fs.writeFile('./tone_templates.json', JSON.stringify(templates, null, 2), 'utf8');
+        logger.info(`Tone template deleted: ${toneName}`);
+
+        res.json({
+            success: true,
+            message: 'Tone deleted successfully'
+        });
+
+    } catch (error) {
+        logger.error('Error deleting tone template:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/members', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const searchQuery = req.query.search || '';
+        const sortBy = req.query.sortBy || '';
+        const sortOrder = req.query.sortOrder || 'desc';
+
+        if (page < 1 || limit < 1 || limit > 100) {
+            return res.json({
+                success: false,
+                message: 'Invalid pagination parameters'
+            });
+        }
+
+        const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+        let allMembers = JSON.parse(data);
+
+        if (searchQuery.trim()) {
+            const search = searchQuery.toLowerCase();
+            allMembers = allMembers.filter(member =>
+                member.NM.toLowerCase().includes(search)
+            );
+        }
+
+        const levelStats = {
+            total: allMembers.length,
+            highLevel: allMembers.filter(m => m.LVL >= 10).length,
+            mediumLevel: allMembers.filter(m => m.LVL >= 5 && m.LVL <= 9).length,
+            lowLevel: allMembers.filter(m => m.LVL >= 1 && m.LVL <= 4).length
+        };
+
+        // Sort by time if requested
+        if (sortBy === 'dailyTime' || sortBy === 'weeklyTime' || sortBy === 'monthlyTime') {
+            const currentDay = getCurrentDay();
+            const currentWeek = getCurrentWeek();
+            const currentMonth = getCurrentMonth();
+            
+            allMembers.sort((a, b) => {
+                let aSeconds = 0;
+                let bSeconds = 0;
+                
+                if (sortBy === 'dailyTime') {
+                    aSeconds = (a.timeTracking?.lastDayReset === currentDay) ? (a.timeTracking?.dailySeconds || 0) : 0;
+                    bSeconds = (b.timeTracking?.lastDayReset === currentDay) ? (b.timeTracking?.dailySeconds || 0) : 0;
+                } else if (sortBy === 'weeklyTime') {
+                    aSeconds = (a.timeTracking?.lastWeekReset === currentWeek) ? (a.timeTracking?.weeklySeconds || 0) : 0;
+                    bSeconds = (b.timeTracking?.lastWeekReset === currentWeek) ? (b.timeTracking?.weeklySeconds || 0) : 0;
+                } else if (sortBy === 'monthlyTime') {
+                    aSeconds = (a.timeTracking?.lastMonthReset === currentMonth) ? (a.timeTracking?.monthlySeconds || 0) : 0;
+                    bSeconds = (b.timeTracking?.lastMonthReset === currentMonth) ? (b.timeTracking?.monthlySeconds || 0) : 0;
+                }
+                
+                return sortOrder === 'asc' ? aSeconds - bSeconds : bSeconds - aSeconds;
+            });
+        }
+
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedMembers = allMembers.slice(startIndex, endIndex);
+
+        const responseData = {
+            members: paginatedMembers,
+            total: allMembers.length,
+            page: page,
+            limit: limit,
+            totalPages: Math.ceil(allMembers.length / limit),
+            levelStats: levelStats
+        };
+
+        logger.info(`📋 Members data sent: ${paginatedMembers.length} members (Page ${page}/${responseData.totalPages})`);
+
+        res.json({
+            success: true,
+            data: responseData,
+            message: `Loaded ${paginatedMembers.length} members`
+        });
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.warn('⚠️ Club members file not found');
+            res.json({
+                success: true,
+                data: {
+                    members: [],
+                    total: 0,
+                    page: 1,
+                    limit: limit,
+                    totalPages: 0,
+                    levelStats: {
+                        total: 0,
+                        highLevel: 0,
+                        mediumLevel: 0,
+                        lowLevel: 0
+                    }
+                },
+                message: 'No members file found'
+            });
+        } else {
+            logger.error('❌ Error loading members:', error.message);
+            res.json({
+                success: false,
+                message: 'Failed to load members data'
+            });
+        }
+    }
+});
+
+// Get member time statistics
+app.get('/api/jack/member-time/:uid', async (req, res) => {
+    try {
+        const { uid } = req.params;
+        const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+        const members = JSON.parse(data);
+        
+        const member = members.find(m => m.UID === uid);
+        if (!member) {
+            return res.json({
+                success: false,
+                message: 'Member not found'
+            });
+        }
+
+        const timeStats = getMemberTimeStats(member);
+        
+        res.json({
+            success: true,
+            data: {
+                uid: member.UID,
+                name: member.NM,
+                weeklyHours: timeStats.weeklyHours,
+                monthlyHours: timeStats.monthlyHours,
+                totalHours: timeStats.totalHours,
+                timeTracking: member.timeTracking || null
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting member time:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Get all members with time statistics
+app.get('/api/jack/members-time', async (req, res) => {
+    try {
+        const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+        const members = JSON.parse(data);
+        
+        const membersWithTime = members.map(member => {
+            const timeStats = getMemberTimeStats(member);
+            return {
+                uid: member.UID,
+                name: member.NM,
+                level: member.LVL,
+                weeklyHours: timeStats.weeklyHours,
+                monthlyHours: timeStats.monthlyHours,
+                totalHours: timeStats.totalHours
+            };
+        });
+
+        // Sort by monthly hours (descending)
+        membersWithTime.sort((a, b) => b.monthlyHours - a.monthlyHours);
+        
+        res.json({
+            success: true,
+            data: membersWithTime
+        });
+    } catch (error) {
+        logger.error('Error getting members time:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Get top 3 active users for daily, weekly, and monthly
+app.get('/api/jack/top-active', async (req, res) => {
+    try {
+        const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+        const members = JSON.parse(data);
+        
+        const membersWithTime = members.map(member => {
+            const timeStats = getMemberTimeStats(member);
+            return {
+                uid: member.UID,
+                name: member.NM,
+                level: member.LVL,
+                dailyHours: timeStats.dailyHours,
+                weeklyHours: timeStats.weeklyHours,
+                monthlyHours: timeStats.monthlyHours
+            };
+        });
+
+        // Get top 3 for each period
+        const topDaily = [...membersWithTime]
+            .filter(m => m.dailyHours > 0)
+            .sort((a, b) => b.dailyHours - a.dailyHours)
+            .slice(0, 3);
+
+        const topWeekly = [...membersWithTime]
+            .filter(m => m.weeklyHours > 0)
+            .sort((a, b) => b.weeklyHours - a.weeklyHours)
+            .slice(0, 3);
+
+        const topMonthly = [...membersWithTime]
+            .filter(m => m.monthlyHours > 0)
+            .sort((a, b) => b.monthlyHours - a.monthlyHours)
+            .slice(0, 3);
+        
+        res.json({
+            success: true,
+            data: {
+                daily: topDaily,
+                weekly: topWeekly,
+                monthly: topMonthly
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting top active users:', error.message);
+        res.json({ success: false, message: error.message, data: { daily: [], weekly: [], monthly: [] } });
+    }
+});
+
+app.delete('/api/jack/members/:uid', async (req, res) => {
+    try {
+        const { uid } = req.params;
+
+        if (!uid) {
+            return res.json({
+                success: false,
+                message: 'Member UID is required'
+            });
+        }
+
+        const result = await membersFileLock.withLock(async () => {
+            const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+            const allMembers = JSON.parse(data);
+            const memberIndex = allMembers.findIndex(member => member.UID === uid);
+
+            if (memberIndex === -1) {
+                return { success: false, message: 'Member not found' };
+            }
+
+            const memberToRemove = allMembers[memberIndex];
+            allMembers.splice(memberIndex, 1);
+            
+            // Atomic write
+            const tempFile = MEMBERS_FILE + '.tmp';
+            await fs.writeFile(tempFile, JSON.stringify(allMembers, null, 2), 'utf8');
+            await fs.rename(tempFile, MEMBERS_FILE);
+
+            logger.info(`🗑️ Member removed: ${memberToRemove.NM} (UID: ${uid})`);
+            pendingRemovals.push(uid);
+
+            return {
+                success: true,
+                message: `Member ${memberToRemove.NM} removed successfully`,
+                removedMember: {
+                    UID: memberToRemove.UID,
+                    NM: memberToRemove.NM,
+                    LVL: memberToRemove.LVL
+                }
+            };
+        });
+
+        res.json(result);
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.warn('⚠️ Club members file not found');
+            res.json({
+                success: false,
+                message: 'Members file not found'
+            });
+        } else {
+            logger.error('❌ Error removing member:', error.message);
+            res.json({
+                success: false,
+                message: 'Failed to remove member'
+            });
+        }
+    }
+});
+
+app.post('/api/jack/members/bulk-remove', async (req, res) => {
+    try {
+        const { level, count } = req.body;
+
+        if (typeof level !== 'number' || typeof count !== 'number') {
+            return res.json({
+                success: false,
+                message: 'Level and count must be numbers'
+            });
+        }
+
+        if (level < 1 || level > 100) {
+            return res.json({
+                success: false,
+                message: 'Level must be between 1 and 100'
+            });
+        }
+
+        if (count < 1 || count > 100) {
+            return res.json({
+                success: false,
+                message: 'Count must be between 1 and 100'
+            });
+        }
+
+        const result = await membersFileLock.withLock(async () => {
+            const data = await fs.readFile(MEMBERS_FILE, 'utf8');
+            const allMembers = JSON.parse(data);
+            const membersAtLevel = allMembers.filter(member => member.LVL === level);
+
+            if (membersAtLevel.length === 0) {
+                return {
+                    success: false,
+                    message: `No members found at level ${level}`
+                };
+            }
+
+            const removeCount = Math.min(count, membersAtLevel.length);
+            const membersToRemove = membersAtLevel.slice(0, removeCount);
+            const uidsToRemove = membersToRemove.map(m => m.UID);
+
+            const updatedMembers = allMembers.filter(member => !uidsToRemove.includes(member.UID));
+            
+            // Atomic write
+            const tempFile = MEMBERS_FILE + '.tmp';
+            await fs.writeFile(tempFile, JSON.stringify(updatedMembers, null, 2), 'utf8');
+            await fs.rename(tempFile, MEMBERS_FILE);
+
+            pendingRemovals.push(...uidsToRemove);
+            logger.info(`🗑️ Bulk removed ${removeCount} members at level ${level}`);
+
+            return {
+                success: true,
+                message: `Successfully removed ${removeCount} members at level ${level}`,
+                removedCount: removeCount,
+                level: level,
+                remainingAtLevel: membersAtLevel.length - removeCount
+            };
+        });
+
+        res.json(result);
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.warn('⚠️ Club members file not found');
+            res.json({
+                success: false,
+                message: 'Members file not found'
+            });
+        } else {
+            logger.error('❌ Error bulk removing members:', error.message);
+            res.json({
+                success: false,
+                message: 'Failed to bulk remove members'
+            });
+        }
+    }
+});
+
+app.get('/api/jack/bot-config', async (req, res) => {
+    try {
+        const data = await fs.readFile('./bot_configuration.json', 'utf8');
+        const config = JSON.parse(data);
+        botConfig.botConfiguration = config;
+
+        res.json({
+            success: true,
+            data: config,
+            filename: 'bot_configuration.json'
+        });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            const defaultConfig = {
+                botName: 'Elijah',
+                botTone: 'upbeat',
+                welcomeMessage: '✨️˚.⭒Wᴇʟᴄᴏᴍᴇ {name}˚✨️',
+                createdAt: new Date().toISOString()
+            };
+
+            await fs.writeFile('./bot_configuration.json', JSON.stringify(defaultConfig, null, 2));
+            logger.info('Created default bot_configuration.json file');
+
+            res.json({
+                success: true,
+                data: defaultConfig,
+                filename: 'bot_configuration.json'
+            });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/bot-config', async (req, res) => {
+    try {
+        const { botName, botTone, welcomeMessage } = req.body;
+
+        if (!botName || typeof botName !== 'string' ||
+            !botTone || typeof botTone !== 'string' ||
+            !welcomeMessage || typeof welcomeMessage !== 'string') {
+            return res.json({ success: false, message: 'Invalid bot configuration data' });
+        }
+
+        const availableTones = Object.keys(botConfig.toneTemplates?.tones || {});
+        if (availableTones.length > 0 && !availableTones.includes(botTone)) {
+            return res.json({
+                success: false,
+                message: `Invalid bot tone. Available tones: ${availableTones.join(', ')}`
+            });
+        }
+
+        const config = {
+            botName: botName.trim(),
+            botTone,
+            welcomeMessage: welcomeMessage.trim(),
+            updatedAt: new Date().toISOString()
+        };
+
+        await fs.writeFile('./bot_configuration.json', JSON.stringify(config, null, 2), 'utf8');
+        botConfig.botConfiguration = config;
+
+        logger.info(`Bot configuration updated: Name: ${botName}, Tone: ${botTone}, Welcome: ${welcomeMessage}`);
+
+        res.json({
+            success: true,
+            message: 'Bot configuration saved successfully',
+            filename: 'bot_configuration.json'
+        });
+
+        conversationHistory.clear();
+    } catch (error) {
+        logger.error('Error saving bot configuration:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/settings', async (req, res) => {
+    try {
+        const settings = await loadSettings();
+
+        res.json({
+            success: true,
+            data: settings,
+            filename: 'settings.json'
+        });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({
+                success: true,
+                data: DEFAULT_SETTINGS,
+                filename: 'settings.json'
+            });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/fetch-vc-credentials', async (req, res) => {
+    try {
+        const code = req.body?.code;
+
+        if (!code) {
+            return res.json({
+                success: false,
+                message: 'Club code is required'
+            });
+        }
+
+        if (!botState.ws || !botState.connected) {
+            return res.json({
+                success: false,
+                message: 'Bot is not connected'
+            });
+        }
+
+        logger.info(`🔄 Fetching VC credentials for club: ${code}`);
+
+        // Create a promise that will be resolved when CJA is received
+        const vcPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                pendingVCRequest = null;
+                reject(new Error('Timeout waiting for VC credentials'));
+            }, 15000); // 15 second timeout
+
+            pendingVCRequest = {
+                resolve: (credentials) => {
+                    clearTimeout(timeout);
+                    pendingVCRequest = null;
+                    resolve(credentials);
+                },
+                reject: (error) => {
+                    clearTimeout(timeout);
+                    pendingVCRequest = null;
+                    reject(error);
+                },
+                targetClub: code
+            };
+        });
+
+        // Exit current club
+        botState.ws.send(Buffer.from(JSON.stringify({
+            RH: "CBC",
+            PU: "LC",
+            PY: JSON.stringify({
+                IDX: "1",
+                TY: 0
+            })
+        })).toString('base64'));
+
+        inClub = false;
+
+        // Wait a moment before joining target club
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Join target club
+        botState.ws.send(Buffer.from(JSON.stringify({
+            "RH": "CBC",
+            "PU": "CJ",
+            "PY": JSON.stringify({
+                "IDX": "2",
+                "CID": `${code}`,
+                "PI": {
+                    "GA": false,
+                    "NM": "Bot",
+                    "XP": 0,
+                    "UID": my_uid
+                }
+            }),
+            "SQ": null,
+            "EN": false
+        })).toString('base64'));
+
+        // Wait for CJA response with credentials
+        const credentials = await vcPromise;
+
+        logger.info(`✅ Got VC credentials for club ${code}`);
+
+        // Exit target club and rejoin default club
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        botState.ws.send(Buffer.from(JSON.stringify({
+            RH: "CBC",
+            PU: "LC",
+            PY: JSON.stringify({
+                IDX: "1",
+                TY: 0
+            })
+        })).toString('base64'));
+
+        inClub = false;
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Rejoin default club
+        botState.ws.send(Buffer.from(JSON.stringify({
+            "RH": "CBC",
+            "PU": "CJ",
+            "PY": JSON.stringify({
+                "IDX": "2",
+                "CID": `${club_code}`,
+                "PI": {
+                    "GA": false,
+                    "NM": "Bot",
+                    "XP": 0,
+                    "UID": my_uid
+                }
+            }),
+            "SQ": null,
+            "EN": false
+        })).toString('base64'));
+
+        logger.info(`✅ Rejoined default club ${club_code}`);
+
+        res.json({
+            success: true,
+            message: 'VC credentials fetched successfully',
+            credentials: credentials
+        });
+
+    } catch (error) {
+        logger.error('❌ Error fetching VC credentials:', error.message);
+        
+        // Try to rejoin default club on error
+        try {
+            if (botState.ws && botState.connected) {
+                botState.ws.send(Buffer.from(JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "CJ",
+                    "PY": JSON.stringify({
+                        "IDX": "2",
+                        "CID": `${club_code}`,
+                        "PI": {
+                            "GA": false,
+                            "NM": "Bot",
+                            "XP": 0,
+                            "UID": my_uid
+                        }
+                    }),
+                    "SQ": null,
+                    "EN": false
+                })).toString('base64'));
+            }
+        } catch (e) {
+            logger.error('Failed to rejoin default club:', e.message);
+        }
+
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/restart', async (req, res) => {
+    try {
+        logger.info('🔄 Bot restart requested from dashboard');
+
+        res.json({
+            success: true,
+            message: 'Bot restart initiated - PM2 will handle the restart'
+        });
+
+        setTimeout(() => {
+            logger.info('🔄 Executing process.exit(0) for PM2 restart');
+            process.exit(0);
+        }, 1000);
+
+    } catch (error) {
+        logger.error('❌ Error during restart:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/update-token', async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        if (!token) {
+            return res.json({
+                success: false,
+                message: 'Token is required'
+            });
+        }
+
+        logger.info('🔄 Token update requested');
+
+        let newEP, newKEY;
+
+        // Validate token and extract EP/KEY
+        try {
+            const decoded = Buffer.from(token.trim(), 'base64').toString('utf-8');
+            const outer = JSON.parse(decoded);
+            const pyData = JSON.parse(outer.PY);
+
+            if (!pyData.EP || !pyData.KEY) {
+                throw new Error('Missing EP or KEY');
+            }
+            newEP = pyData.EP;
+            newKEY = pyData.KEY;
+            logger.info('✅ Token validated - contains EP and KEY');
+        } catch (validationErr) {
+            logger.error('❌ Token validation failed:', validationErr.message);
+            return res.json({
+                success: false,
+                message: 'Invalid token format. Token must be valid base64 with EP and KEY.'
+            });
+        }
+
+        // Write new token to token.txt
+        await fs.writeFile('token.txt', token, 'utf8');
+        logger.info('✅ token.txt updated');
+
+        // Update EP and KEY in .env file
+        await updateEnvCredentials({ EP: newEP, KEY: newKEY });
+        logger.info('✅ EP and KEY updated in .env');
+
+        // Update in-memory credentials
+        bot_ep = newEP;
+        bot_key = newKEY;
+        process.env.EP = newEP;
+        process.env.KEY = newKEY;
+        logger.info('✅ In-memory credentials updated');
+
+        // Close existing WebSocket and reconnect with new credentials
+        if (wsIntervals.length > 0) {
+            logger.info(`🧹 Clearing ${wsIntervals.length} WebSocket intervals`);
+            wsIntervals.forEach(interval => clearInterval(interval));
+            wsIntervals = [];
+        }
+
+        authRequired = false;
+        authMessage = null;
+        inClub = false;
+
+        if (botState.ws) {
+            botState.ws.close();
+            botState.ws = null;
+        }
+
+        botState.connected = false;
+        botState.connecting = true;
+
+        setTimeout(async () => {
+            try {
+                await connectWebSocket();
+                logger.info('✅ WebSocket reconnected with new credentials');
+            } catch (err) {
+                logger.error('❌ Failed to reconnect WebSocket:', err.message);
+            }
+        }, 200);
+
+        res.json({
+            success: true,
+            message: 'Token updated, credentials saved to .env, WebSocket reconnecting...'
+        });
+
+    } catch (error) {
+        logger.error('❌ Error updating token:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/regenerate-token', async (req, res) => {
+    try {
+        logger.info('🔄 Token regeneration requested - reconnecting WebSocket');
+
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        isReconnecting = false;
+
+        if (wsIntervals.length > 0) {
+            logger.info(`🧹 Clearing ${wsIntervals.length} WebSocket intervals`);
+            wsIntervals.forEach(interval => clearInterval(interval));
+            wsIntervals = [];
+        }
+
+        authRequired = false;
+        authMessage = null;
+        inClub = false;
+
+        if (botState.ws) {
+            botState.ws.removeAllListeners();
+            botState.ws.close();
+            botState.ws = null;
+        }
+
+        botState.connected = false;
+        botState.connecting = true;
+
+        setTimeout(async () => {
+            try {
+                await connectWebSocket();
+                logger.info('✅ WebSocket reconnected for token regeneration');
+            } catch (err) {
+                logger.error('❌ Failed to reconnect WebSocket:', err.message);
+            }
+        }, 500);
+
+        res.json({
+            success: true,
+            message: 'Token regeneration initiated - WebSocket reconnecting'
+        });
+
+    } catch (error) {
+        logger.error('❌ Error during token regeneration:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/settings', async (req, res) => {
+    try {
+        const { allowAvatars, banLevel, allowGuestIds, enableLevelBan, micCount, punishments } = req.body;
+
+        if (typeof allowAvatars !== 'boolean' ||
+            typeof allowGuestIds !== 'boolean' ||
+            typeof banLevel !== 'number' ||
+            banLevel < 1 || banLevel > 100) {
+            return res.json({ success: false, message: 'Invalid settings data' });
+        }
+
+        if (punishments) {
+            const validPunishmentTypes = ['ban', 'kick'];
+            const validViolationTypes = ['bannedPatterns', 'lowLevel', 'noGuestId', 'noAvatar', 'spamWords'];
+
+            for (const [key, value] of Object.entries(punishments)) {
+                if (!validViolationTypes.includes(key) || !validPunishmentTypes.includes(value)) {
+                    return res.json({ success: false, message: 'Invalid punishment configuration' });
+                }
+            }
+        }
+
+        // Validate micCount
+        const validMicCount = (typeof micCount === 'number' && micCount >= 1 && micCount <= 20) ? micCount : 10;
+
+        const settings = {
+            allowAvatars,
+            banLevel,
+            allowGuestIds,
+            enableLevelBan: enableLevelBan ?? true,
+            micCount: validMicCount,
+            punishments: punishments || {
+                bannedPatterns: 'ban',
+                lowLevel: 'ban',
+                noGuestId: 'ban',
+                noAvatar: 'kick',
+                spamWords: 'kick'
+            },
+            updatedAt: new Date().toISOString()
+        };
+
+        await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+        botConfig.settings = settings;
+
+        // Update mics array based on new micCount
+        mics = new Array(validMicCount).fill(null);
+
+        logger.info(`Settings updated: Avatars: ${allowAvatars}, Ban Level: ${banLevel}, Guest IDs: ${allowGuestIds}, Level Ban: ${enableLevelBan ?? true}, Mic Count: ${validMicCount}`);
+        logger.info(`Punishments: ${JSON.stringify(settings.punishments)}`);
+
+        res.json({
+            success: true,
+            message: 'Settings saved successfully',
+            filename: 'settings.json'
+        });
+
+    } catch (error) {
+        logger.error('Error saving settings:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/config/:type', async (req, res) => {
+    try {
+        const { type } = req.params;
+        const filePath = CONFIG_FILES[type];
+
+        if (!filePath) {
+            return res.json({ success: false, message: 'Invalid config type' });
+        }
+
+        const data = await fs.readFile(filePath, 'utf8');
+        let parsedData;
+
+        if (type === 'spam-words') {
+            parsedData = data.split('\n').filter(line => line.trim() !== '');
+        } else if (type === 'banned-patterns') {
+            parsedData = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        } else if (type === 'admins') {
+            parsedData = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        } else if (type === 'exemptions') {
+            parsedData = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        } else if (type === 'loyal_members') {
+            parsedData = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        }
+
+        res.json({
+            success: true,
+            data: parsedData,
+            filename: path.basename(filePath)
+        });
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({ success: false, message: 'File not found' });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/config/:type', async (req, res) => {
+    try {
+        const { type } = req.params;
+        const { data } = req.body;
+        const filePath = CONFIG_FILES[type];
+
+        if (!filePath) {
+            return res.json({ success: false, message: 'Invalid config type' });
+        }
+
+        let fileContent;
+
+        if (type === 'spam-words') {
+            fileContent = data.join('\n');
+            botConfig.spamWords = data;
+        } else if (type === 'banned-patterns') {
+            fileContent = data.join(', ');
+            botConfig.bannedPatterns = data;
+        } else if (type === 'admins') {
+            fileContent = data.join(', ');
+            botConfig.admins = data;
+        } else if (type === 'exemptions') {
+            fileContent = data.join(', ');
+            botConfig.exemptions = data;
+        } else if (type === 'loyal_members') {
+            fileContent = data.join(', ');
+            botConfig.loyal_members = data;
+        }
+
+        await fs.writeFile(filePath, fileContent, 'utf8');
+        logger.info(`Configuration ${type} updated: ${data.length} items`);
+
+        res.json({
+            success: true,
+            message: 'Configuration saved',
+            filename: path.basename(filePath)
+        });
+
+    } catch (error) {
+        logger.error(`Error saving ${type}:`, error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Password-protected Admins endpoints
+const ADMINS_PAGE_PASSWORD = 'Affan0000';
+const CHAT_PAGE_PASSWORD = 'Affan0000';
+
+app.post('/api/jack/admins/verify-password', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMINS_PAGE_PASSWORD) {
+        res.json({ success: true, message: 'Password verified' });
+    } else {
+        res.json({ success: false, message: 'Invalid password' });
+    }
+});
+
+app.post('/api/jack/admins/list', async (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    
+    try {
+        const filePath = CONFIG_FILES['admins'];
+        const data = await fs.readFile(filePath, 'utf8');
+        const admins = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        res.json({ success: true, data: admins });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({ success: true, data: [] });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/admins/save', async (req, res) => {
+    const { password, data } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    
+    try {
+        const filePath = CONFIG_FILES['admins'];
+        const content = Array.isArray(data) ? data.join(', ') : '';
+        await fs.writeFile(filePath, content, 'utf8');
+        
+        // Reload admins into botConfig
+        botConfig.admins = data;
+        
+        res.json({ success: true, message: 'Admins saved successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Password-protected Blacklist endpoints
+app.post('/api/jack/blacklist/verify-password', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMINS_PAGE_PASSWORD) {
+        res.json({ success: true });
+    } else {
+        res.json({ success: false, message: 'Invalid password' });
+    }
+});
+
+app.post('/api/jack/blacklist/list', async (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    try {
+        const filePath = CONFIG_FILES['blacklist'];
+        const data = await fs.readFile(filePath, 'utf8');
+        const blacklist = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        res.json({ success: true, data: blacklist });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({ success: true, data: [] });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/blacklist/save', async (req, res) => {
+    const { password, data } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    try {
+        const filePath = CONFIG_FILES['blacklist'];
+        const content = Array.isArray(data) ? data.join(', ') : '';
+        await fs.writeFile(filePath, content, 'utf8');
+        res.json({ success: true, message: 'Blacklist saved successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Password-protected Hitlist endpoints
+app.post('/api/jack/hitlist/verify-password', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMINS_PAGE_PASSWORD) {
+        res.json({ success: true });
+    } else {
+        res.json({ success: false, message: 'Invalid password' });
+    }
+});
+
+app.post('/api/jack/hitlist/list', async (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    try {
+        const filePath = CONFIG_FILES['hitlist'];
+        const data = await fs.readFile(filePath, 'utf8');
+        const hitlist = data.split(',').map(item => item.trim()).filter(item => item !== '');
+        res.json({ success: true, data: hitlist });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({ success: true, data: [] });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/hitlist/save', async (req, res) => {
+    const { password, data } = req.body;
+    if (password !== ADMINS_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    try {
+        const filePath = CONFIG_FILES['hitlist'];
+        const content = Array.isArray(data) ? data.join(', ') : '';
+        await fs.writeFile(filePath, content, 'utf8');
+        res.json({ success: true, message: 'Hitlist saved successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Page Protection endpoints
+const PAGE_PROTECTION_FILE = './page_protection.json';
+const PROTECTABLE_PAGES = [
+    { id: 'admins', label: 'Administrators', path: '/admins' },
+    { id: 'chat', label: 'Chat History', path: '/chat' },
+    { id: 'blacklist', label: 'Blacklist/Hitlist', path: '/blacklist' },
+    { id: 'moderators', label: 'Moderators', path: '/moderators' },
+    { id: 'kick-ban-logs', label: 'Kick/Ban Logs', path: '/kick-ban-logs' },
+    { id: 'secret-messages', label: 'Secret Messages', path: '/secret-messages' },
+    { id: 'logs', label: 'Activity Logs', path: '/logs' },
+    { id: 'spam-kicks', label: 'Spam Kicks', path: '/spam-kicks' },
+    { id: 'controls', label: 'Bot Controls', path: '/controls' },
+    { id: 'configuration', label: 'Configuration', path: '/configuration' },
+    { id: 'settings', label: 'Settings', path: '/settings' },
+    { id: 'protection', label: 'Protection', path: '/protection' },
+    { id: 'exemptions', label: 'Exemptions', path: '/exemptions' },
+    { id: 'loyal-members', label: 'Loyal Members', path: '/loyal-members' },
+    { id: 'members', label: 'Members', path: '/members' },
+    { id: 'players', label: 'Players', path: '/players' },
+    { id: 'music', label: 'Music', path: '/music' },
+];
+
+async function readPageProtection() {
+    try {
+        const data = await fs.readFile(PAGE_PROTECTION_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        return { passwordHash: '', protectedPages: {} };
+    }
+}
+
+async function writePageProtection(config) {
+    await fs.writeFile(PAGE_PROTECTION_FILE, JSON.stringify(config, null, 2), 'utf8');
+}
+
+app.get('/api/page-protection/status', async (_req, res) => {
+    try {
+        const config = await readPageProtection();
+        res.json({
+            success: true,
+            hasPassword: !!config.passwordHash,
+            protectedPages: config.protectedPages || {},
+            pages: PROTECTABLE_PAGES,
+        });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/page-protection/set-password', async (req, res) => {
+    try {
+        const { password, confirmPassword } = req.body;
+        if (!password || !confirmPassword) {
+            return res.json({ success: false, message: 'Password and confirmation are required' });
+        }
+        if (password !== confirmPassword) {
+            return res.json({ success: false, message: 'Passwords do not match' });
+        }
+        if (password.length < 4) {
+            return res.json({ success: false, message: 'Password must be at least 4 characters' });
+        }
+        const config = await readPageProtection();
+        config.passwordHash = await bcrypt.hash(password, 10);
+        await writePageProtection(config);
+        res.json({ success: true, message: 'Password set successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/page-protection/change-password', async (req, res) => {
+    try {
+        const { currentPassword, newPassword, confirmPassword } = req.body;
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            return res.json({ success: false, message: 'All fields are required' });
+        }
+        if (newPassword !== confirmPassword) {
+            return res.json({ success: false, message: 'New passwords do not match' });
+        }
+        if (newPassword.length < 4) {
+            return res.json({ success: false, message: 'Password must be at least 4 characters' });
+        }
+        const config = await readPageProtection();
+        if (!config.passwordHash) {
+            return res.json({ success: false, message: 'No password set yet' });
+        }
+        const valid = await bcrypt.compare(currentPassword, config.passwordHash);
+        if (!valid) {
+            return res.json({ success: false, message: 'Current password is incorrect' });
+        }
+        config.passwordHash = await bcrypt.hash(newPassword, 10);
+        await writePageProtection(config);
+        res.json({ success: true, message: 'Password changed successfully' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/page-protection/verify', async (req, res) => {
+    try {
+        const { password } = req.body;
+        if (!password) {
+            return res.json({ success: false, message: 'Password is required' });
+        }
+        const config = await readPageProtection();
+        if (!config.passwordHash) {
+            return res.json({ success: false, message: 'No password set' });
+        }
+        const valid = await bcrypt.compare(password, config.passwordHash);
+        if (valid) {
+            res.json({ success: true, message: 'Password verified' });
+        } else {
+            res.json({ success: false, message: 'Invalid password' });
+        }
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/page-protection/update', async (req, res) => {
+    try {
+        const { password, protectedPages } = req.body;
+        if (!password) {
+            return res.json({ success: false, message: 'Password is required' });
+        }
+        const config = await readPageProtection();
+        if (!config.passwordHash) {
+            return res.json({ success: false, message: 'No password set' });
+        }
+        const valid = await bcrypt.compare(password, config.passwordHash);
+        if (!valid) {
+            return res.json({ success: false, message: 'Invalid password' });
+        }
+        config.protectedPages = protectedPages || {};
+        await writePageProtection(config);
+        res.json({ success: true, message: 'Protection settings updated' });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/page-protection/check-page', async (req, res) => {
+    try {
+        const { pagePath } = req.body;
+        const config = await readPageProtection();
+        if (!config.passwordHash) {
+            return res.json({ success: true, isProtected: false });
+        }
+        const pageId = (pagePath || '').replace(/^\//, '');
+        const isProtected = config.protectedPages?.[pageId] === true;
+        res.json({ success: true, isProtected });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// Feature toggle endpoints
+app.post('/api/jack/features/verify-password', (req, res) => {
+    const { password } = req.body;
+    if (password === FEATURES_PASSWORD) {
+        res.json({ success: true });
+    } else {
+        res.json({ success: false, message: 'Invalid password' });
+    }
+});
+
+app.post('/api/jack/features/get', (req, res) => {
+    const { password } = req.body;
+    if (password !== FEATURES_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    res.json({ success: true, data: featureToggles });
+});
+
+app.post('/api/jack/features/update', async (req, res) => {
+    const { password, toggles } = req.body;
+    if (password !== FEATURES_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    try {
+        for (const [key, value] of Object.entries(toggles)) {
+            if (featureToggles[key] !== undefined) {
+                featureToggles[key].enabled = !!value;
+            }
+        }
+        await saveFeatureToggles();
+        res.json({ success: true, data: featureToggles });
+    } catch (error) {
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/features/status', (req, res) => {
+    const status = {};
+    for (const [key, feature] of Object.entries(featureToggles)) {
+        status[key] = {
+            label: feature.label,
+            description: feature.description,
+            enabled: feature.enabled,
+            commands: feature.commands
+        };
+    }
+    res.json({ success: true, data: status });
+});
+
+// Password-protected Chat endpoints with 7-day retention
+const CHAT_FILE = './chat.txt';
+
+async function cleanupOldChatMessages() {
+    try {
+        const data = await fs.readFile(CHAT_FILE, 'utf8');
+        const lines = data.split('\n').filter(line => line.trim() !== '');
+        
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        const filteredLines = lines.filter(line => {
+            // Extract timestamp from line format: [2024-01-15 10:30:45] message
+            const match = line.match(/^\[(\d{4}-\d{2}-\d{2})/);
+            if (match) {
+                const lineDate = new Date(match[1]);
+                return lineDate >= sevenDaysAgo;
+            }
+            return true; // Keep lines without proper timestamp format
+        });
+        
+        await fs.writeFile(CHAT_FILE, filteredLines.join('\n'), 'utf8');
+        logger.info(`Chat cleanup: Kept ${filteredLines.length} messages from last 7 days`);
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            logger.error('Error cleaning up chat messages:', error.message);
+        }
+    }
+}
+
+// Run chat cleanup on startup and every 24 hours
+cleanupOldChatMessages();
+setInterval(cleanupOldChatMessages, 24 * 60 * 60 * 1000);
+
+app.post('/api/jack/chat/verify-password', (req, res) => {
+    const { password } = req.body;
+    if (password === CHAT_PAGE_PASSWORD) {
+        res.json({ success: true, message: 'Password verified' });
+    } else {
+        res.json({ success: false, message: 'Invalid password' });
+    }
+});
+
+app.post('/api/jack/chat/messages', async (req, res) => {
+    const { password, page = 1, limit = 100 } = req.body;
+    if (password !== CHAT_PAGE_PASSWORD) {
+        return res.json({ success: false, message: 'Invalid password' });
+    }
+    
+    try {
+        const data = await fs.readFile(CHAT_FILE, 'utf8');
+        const lines = data.split('\n').filter(line => line.trim() !== '');
+        
+        // Reverse to show newest first
+        const reversedLines = lines.reverse();
+        
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedLines = reversedLines.slice(startIndex, endIndex);
+        
+        res.json({
+            success: true,
+            data: paginatedLines,
+            page,
+            limit,
+            total: lines.length,
+            hasMore: endIndex < lines.length
+        });
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            res.json({ success: true, data: [], page, limit, total: 0, hasMore: false });
+        } else {
+            res.json({ success: false, message: error.message });
+        }
+    }
+});
+
+app.post('/api/jack/connect', async (req, res) => {
+    try {
+        if (botState.connected || botState.connecting) {
+            return res.json({ success: false, message: 'Bot is already connected or connecting' });
+        }
+
+        logger.info(`🤖 Bot ${botConfig.botConfiguration?.botName} connection requested from dashboard`);
+
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        isReconnecting = false;
+        intentionalDisconnect = false;
+
+        await loadAllConfigurations();
+
+        botState.connecting = true;
+        botState.startTime = Date.now();
+
+        const connected = await connectWebSocket();
+
+        if (connected) {
+            botState.connected = true;
+            botState.connecting = false;
+            logger.info(`✅ Bot ${botConfig.botConfiguration?.botName} connected successfully`);
+            res.json({
+                success: true,
+                message: `Bot ${botConfig.botConfiguration?.botName} connected successfully`,
+                clubCode: botState.clubCode,
+                clubName: botState.clubName
+            });
+        } else {
+            botState.connecting = false;
+            res.json({ success: false, message: 'Failed to connect to WebSocket' });
+        }
+
+    } catch (error) {
+        botState.connecting = false;
+        logger.error('❌ Error connecting bot:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/jack/disconnect', async (req, res) => {
+    try {
+        if (!botState.connected) {
+            return res.json({ success: false, message: 'Bot is not connected' });
+        }
+
+        logger.info(`🔌 Bot ${botConfig.botConfiguration?.botName} disconnection requested from dashboard`);
+
+        intentionalDisconnect = true;
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        isReconnecting = false;
+
+        if (botState.ws) {
+            exitclub();
+
+            setTimeout(() => {
+                if (botState.ws) {
+                    botState.ws.removeAllListeners();
+                    botState.ws.close();
+                    botState.ws = null;
+                }
+            }, 1000);
+        }
+
+        botState.connected = false;
+        botState.startTime = null;
+
+        logger.info(`🔴 Bot ${botConfig.botConfiguration?.botName} disconnected`);
+        res.json({
+            success: true,
+            message: `Bot ${botConfig.botConfiguration?.botName} disconnected successfully`
+        });
+
+    } catch (error) {
+        logger.error('❌ Error disconnecting bot:', error.message);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/jack/status', (req, res) => {
+    const uptime = botState.startTime ? Date.now() - botState.startTime : 0;
+
+    res.json({
+        success: true,
+        connected: botState.connected,
+        connecting: botState.connecting,
+        clubCode: botState.clubCode,
+        clubName: botState.clubName,
+        uptime: uptime,
+        stats: botState.stats,
+        configLoaded: {
+            admins: botConfig.admins.length,
+            spamWords: botConfig.spamWords.length,
+            bannedPatterns: botConfig.bannedPatterns.length
+        }
+    });
+});
+
+// ====================
+// SONGS API ENDPOINTS
+// ====================
+
+// Get songs list - PUBLIC for stream listeners
+app.get('/api/jack/stream-songs', async (req, res) => {
+    try {
+        const songs = await loadSongsMetadata();
+        res.json({ success: true, data: songs });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to load songs' });
+    }
+});
+
+// Music upload feature status
+app.get('/api/jack/music-feature-status', authMiddleware, (req, res) => {
+    const MUSIC_UPLOAD_ENABLED = process.env.MUSIC_UPLOAD_ENABLED === 'true';
+    res.json({ success: true, uploadEnabled: MUSIC_UPLOAD_ENABLED });
+});
+
+// Get spam kick logs (authenticated)
+app.get('/api/jack/spam-kicks', authMiddleware, async (req, res) => {
+    try {
+        const kicks = await loadSpamKicks();
+        res.json({ success: true, data: kicks });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to load spam kicks' });
+    }
+});
+
+// Secret Messages endpoints (owner-only)
+app.get('/api/jack/secret-messages', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const messages = await loadSecretMessages();
+        messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        res.json({ success: true, data: messages });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to load secret messages' });
+    }
+});
+
+app.delete('/api/jack/secret-messages/:id', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        const messages = await loadSecretMessages();
+        const idx = messages.findIndex(m => m.id === req.params.id);
+        if (idx === -1) {
+            return res.json({ success: false, message: 'Message not found' });
+        }
+        messages.splice(idx, 1);
+        await saveSecretMessages(messages);
+        res.json({ success: true, message: 'Secret message deleted' });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to delete secret message' });
+    }
+});
+
+app.delete('/api/jack/secret-messages', authMiddleware, ownerOnly, async (req, res) => {
+    try {
+        await saveSecretMessages([]);
+        res.json({ success: true, message: 'All secret messages cleared' });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to clear secret messages' });
+    }
+});
+
+// Kick/Ban Logs endpoints
+app.get('/api/jack/kick-ban-logs', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        
+        const logs = await loadKickBanLogs();
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const paginatedLogs = logs.slice(startIndex, endIndex);
+        
+        res.json({
+            success: true,
+            data: paginatedLogs,
+            page,
+            limit,
+            total: logs.length,
+            hasMore: endIndex < logs.length
+        });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to load kick/ban logs' });
+    }
+});
+
+app.delete('/api/jack/kick-ban-logs', authMiddleware, async (req, res) => {
+    try {
+        await saveKickBanLogs([]);
+        res.json({ success: true, message: 'Kick/ban logs cleared' });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to clear kick/ban logs' });
+    }
+});
+
+// Clear spam kick logs (authenticated)
+app.delete('/api/jack/spam-kicks', authMiddleware, async (req, res) => {
+    try {
+        await saveSpamKicks([]);
+        res.json({ success: true, message: 'Spam kick logs cleared' });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to clear spam kicks' });
+    }
+});
+
+// Get all songs (authenticated)
+app.get('/api/jack/songs', authMiddleware, async (req, res) => {
+    try {
+        const songs = await loadSongsMetadata();
+        res.json({ success: true, data: songs });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to load songs' });
+    }
+});
+
+// Upload song
+app.post('/api/jack/songs/upload', authMiddleware, (req, res, next) => {
+    songUpload.single('song')(req, res, async (err) => {
+        if (err) {
+            return res.json({ success: false, message: err.message || 'Upload failed' });
+        }
+        
+        try {
+            const songs = await loadSongsMetadata();
+            
+            if (songs.length >= MAX_SONGS) {
+                if (req.file) {
+                    await fs.unlink(req.file.path);
+                }
+                return res.json({ success: false, message: `Maximum of ${MAX_SONGS} songs allowed` });
+            }
+
+            if (!req.file) {
+                return res.json({ success: false, message: 'No file uploaded' });
+            }
+
+            const newSong = {
+                id: crypto.randomUUID(),
+                filename: req.file.filename,
+                originalName: req.file.originalname,
+                size: req.file.size,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: req.user?.userId || 'unknown'
+            };
+
+            songs.push(newSong);
+            await saveSongsMetadata(songs);
+
+            logger.info(`🎵 Song uploaded: ${newSong.originalName}`);
+            res.json({ success: true, data: newSong, message: 'Song uploaded successfully' });
+        } catch (error) {
+            res.json({ success: false, message: error.message || 'Failed to upload song' });
+        }
+    });
+});
+
+// Delete song
+app.delete('/api/jack/songs/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const songs = await loadSongsMetadata();
+        const songIndex = songs.findIndex(s => s.id === id);
+        
+        if (songIndex === -1) {
+            return res.json({ success: false, message: 'Song not found' });
+        }
+
+        const song = songs[songIndex];
+        
+        // Delete the file
+        try {
+            await fs.unlink(path.join(SONGS_DIR, song.filename));
+        } catch (err) {
+            // File might not exist, continue anyway
+        }
+
+        // Remove from metadata
+        songs.splice(songIndex, 1);
+        await saveSongsMetadata(songs);
+
+        logger.info(`🎵 Song deleted: ${song.originalName}`);
+        res.json({ success: true, message: 'Song deleted successfully' });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to delete song' });
+    }
+});
+
+// YouTube audio proxy endpoint - streams YouTube audio with CORS headers
+app.get('/api/jack/youtube-proxy', async (req, res) => {
+    try {
+        const { url } = req.query;
+        
+        if (!url) {
+            return res.status(400).json({ success: false, message: 'URL parameter required' });
+        }
+        
+        // Set CORS headers
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+        
+        // Handle preflight
+        if (req.method === 'OPTIONS') {
+            return res.status(200).end();
+        }
+        
+        // Forward range header if present
+        const headers = {};
+        if (req.headers.range) {
+            headers['Range'] = req.headers.range;
+        }
+        
+        const response = await axios({
+            method: 'get',
+            url: decodeURIComponent(url),
+            responseType: 'stream',
+            headers,
+            timeout: 30000,
+            maxRedirects: 5
+        });
+        
+        // Forward relevant headers
+        if (response.headers['content-type']) {
+            res.setHeader('Content-Type', response.headers['content-type']);
+        }
+        if (response.headers['content-length']) {
+            res.setHeader('Content-Length', response.headers['content-length']);
+        }
+        if (response.headers['content-range']) {
+            res.setHeader('Content-Range', response.headers['content-range']);
+        }
+        if (response.headers['accept-ranges']) {
+            res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
+        }
+        
+        // Set status (206 for partial content)
+        res.status(response.status);
+        
+        // Pipe the audio stream
+        response.data.pipe(res);
+        
+        response.data.on('error', (err) => {
+            console.error('[YouTube Proxy] Stream error:', err.message);
+            if (!res.headersSent) {
+                res.status(500).json({ success: false, message: 'Stream error' });
+            }
+        });
+        
+    } catch (error) {
+        console.error('[YouTube Proxy] Error:', error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: 'Proxy error: ' + error.message });
+        }
+    }
+});
+
+// Serve song files - PUBLIC for stream listeners
+app.get('/api/jack/songs/file/:filename', async (req, res) => {
+    try {
+        const { filename } = req.params;
+        const filePath = path.join(SONGS_DIR, filename);
+        
+        // Security: ensure filename doesn't contain path traversal
+        if (filename.includes('..') || filename.includes('/')) {
+            return res.status(400).json({ success: false, message: 'Invalid filename' });
+        }
+
+        await fs.access(filePath);
+        res.sendFile(path.resolve(filePath));
+    } catch (error) {
+        res.status(404).json({ success: false, message: 'File not found' });
+    }
+});
+
+// ====================
+// STREAM API ENDPOINTS
+// ====================
+
+// Stream state for playback control
+const streamState = {
+    status: 'stopped', // 'playing', 'paused', 'stopped'
+    currentSongIndex: 0,
+    timestamp: Date.now()
+};
+
+// Song Dedication Queue System
+const dedicationQueue = [];
+let currentDedication = null;
+let dedicationMessageInterval = null;
+
+function generateDedicationId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+}
+
+function clearDedicationInterval() {
+    if (dedicationMessageInterval) {
+        clearInterval(dedicationMessageInterval);
+        dedicationMessageInterval = null;
+    }
+}
+
+async function playNextDedication() {
+    clearDedicationInterval();
+    currentDedication = null;
+
+    if (dedicationQueue.length === 0) {
+        logger.info('🎵 Dedication queue is empty');
+        return;
+    }
+
+    const dedication = dedicationQueue.shift();
+    dedication.status = 'playing';
+    currentDedication = dedication;
+
+    logger.info(`🎵 Playing dedication: "${dedication.songName}" for ${dedication.name}`);
+
+    try {
+        if (!onMic) {
+            joinMicGlobal(1);
+            let waited = 0;
+            while (!onMic && waited < 3000) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                waited += 200;
+            }
+        }
+
+        const { spawn } = require('child_process');
+        const ytArgs = [
+            '--cookies', 'cookies.txt',
+            '--js-runtimes', 'node',
+            '-f', 'bestaudio',
+            '-g',
+            `ytsearch:${dedication.songName}`
+        ];
+
+        const ytProcess = spawn('/root/.local/bin/yt-dlp', ytArgs, { timeout: 30000 });
+        let stdout = '';
+        let stderr = '';
+
+        ytProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+        ytProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+        ytProcess.on('error', (error) => {
+            sendMessageGlobal(`❌ Failed to find song: ${dedication.songName}`);
+            logger.error(`Dedication yt-dlp error: ${error.message}`);
+            currentDedication = null;
+            setTimeout(() => playNextDedication(), 1000);
+        });
+
+        ytProcess.on('close', (code) => {
+            if (code !== 0 || !stdout.trim()) {
+                sendMessageGlobal(`❌ Could not find: ${dedication.songName}`);
+                logger.error(`Dedication yt-dlp failed: ${stderr}`);
+                currentDedication = null;
+                setTimeout(() => playNextDedication(), 1000);
+                return;
+            }
+
+            const audioUrl = stdout.trim();
+            const proxyPath = `/api/jack/youtube-proxy?url=${encodeURIComponent(audioUrl)}`;
+
+            broadcastStreamEvent({
+                action: 'dedication',
+                url: proxyPath,
+                songName: dedication.songName,
+                dedicatedTo: dedication.name,
+                dedicationId: dedication.id,
+                timestamp: Date.now()
+            });
+
+            streamState.status = 'playing';
+            streamState.timestamp = Date.now();
+
+            sendMessageGlobal(`💖 Now playing: "${dedication.songName}" — Dedicated to ${dedication.name}`);
+
+            dedicationMessageInterval = setInterval(() => {
+                if (currentDedication) {
+                    sendMessageGlobal(`💖 This song is dedicated to ${currentDedication.name}`);
+                }
+            }, 30000);
+
+            logger.info(`🎵 Dedication playing: "${dedication.songName}" for ${dedication.name}`);
+        });
+    } catch (err) {
+        logger.error(`Dedication play error: ${err.message}`);
+        currentDedication = null;
+        setTimeout(() => playNextDedication(), 1000);
+    }
+}
+
+// SSE clients for real-time stream updates
+const streamSSEClients = new Set();
+
+// WebSocket clients from dashboard (for receiving stream control events)
+const dashboardWSClients = new Set();
+
+// Broadcast stream event to all connected SSE clients AND dashboard WebSocket clients
+function broadcastStreamEvent(event) {
+    const data = JSON.stringify(event);
+    
+    // Send to SSE clients
+    for (const client of streamSSEClients) {
+        try {
+            client.write(`data: ${data}\n\n`);
+        } catch (err) {
+            streamSSEClients.delete(client);
+        }
+    }
+    
+    // Send to dashboard WebSocket clients
+    for (const ws of dashboardWSClients) {
+        try {
+            if (ws.readyState === 1) { // WebSocket.OPEN
+                ws.send(data);
+            }
+        } catch (err) {
+            dashboardWSClients.delete(ws);
+        }
+    }
+    
+    logger.info(`📡 Broadcast stream event: ${event.action} to ${streamSSEClients.size} SSE + ${dashboardWSClients.size} WS clients`);
+}
+
+// SSE endpoint for stream events - PUBLIC for stream listeners
+app.get('/api/jack/stream-events', (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'X-Accel-Buffering': 'no'
+    });
+
+    // Send initial state
+    res.write(`data: ${JSON.stringify({ action: 'state', ...streamState })}\n\n`);
+
+    // Keep-alive heartbeat every 15 seconds to prevent proxy timeouts
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(`:heartbeat\n\n`);
+        } catch (err) {
+            clearInterval(heartbeat);
+        }
+    }, 15000);
+
+    streamSSEClients.add(res);
+    logger.info(`📡 Stream SSE client connected (total: ${streamSSEClients.size})`);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        streamSSEClients.delete(res);
+        logger.info(`📡 Stream SSE client disconnected (total: ${streamSSEClients.size})`);
+    });
+});
+
+// Get current stream state
+app.get('/api/jack/stream-state', authMiddleware, (req, res) => {
+    res.json({ success: true, data: streamState });
+});
+
+// Song Dedication API endpoints (PUBLIC - no auth required)
+app.post('/api/jack/dedicate', (req, res) => {
+    try {
+        if (!isFeatureEnabled('dedications')) {
+            return res.json({ success: false, message: 'Dedications feature is currently disabled' });
+        }
+        const { name, songName } = req.body;
+        
+        if (!name || !songName || typeof name !== 'string' || typeof songName !== 'string') {
+            return res.json({ success: false, message: 'Name and song name are required' });
+        }
+        
+        if (name.trim().length > 50 || songName.trim().length > 100) {
+            return res.json({ success: false, message: 'Name or song name too long' });
+        }
+        
+        const dedication = {
+            id: generateDedicationId(),
+            name: name.trim(),
+            songName: songName.trim(),
+            status: 'queued',
+            timestamp: Date.now()
+        };
+        
+        dedicationQueue.push(dedication);
+        logger.info(`🎵 Dedication added: "${dedication.songName}" for ${dedication.name} (queue: ${dedicationQueue.length})`);
+        
+        if (!currentDedication) {
+            playNextDedication();
+        }
+        
+        res.json({ success: true, data: dedication, message: 'Dedication added to queue' });
+    } catch (err) {
+        logger.error(`Dedication submit error: ${err.message}`);
+        res.json({ success: false, message: 'Failed to submit dedication' });
+    }
+});
+
+app.get('/api/jack/dedicate/queue', (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            current: currentDedication,
+            queue: dedicationQueue.filter(d => d.status === 'queued')
+        }
+    });
+});
+
+app.post('/api/jack/dedicate/ended', (req, res) => {
+    const { dedicationId } = req.body || {};
+    
+    if (!currentDedication) {
+        return res.json({ success: false, message: 'No dedication currently playing' });
+    }
+    
+    if (dedicationId && dedicationId !== currentDedication.id) {
+        return res.json({ success: false, message: 'Dedication ID mismatch, already advanced' });
+    }
+    
+    logger.info('🎵 Dedication song ended, playing next...');
+    clearDedicationInterval();
+    currentDedication = null;
+    
+    if (dedicationQueue.length > 0) {
+        playNextDedication();
+        res.json({ success: true, message: 'Playing next dedication' });
+    } else {
+        sendMessageGlobal('🎵 All dedications have been played!');
+        res.json({ success: true, message: 'Dedication queue empty' });
+    }
+});
+
+app.post('/api/jack/dedicate/skip', authMiddleware, (req, res) => {
+    logger.info('⏭️ Dedication skipped');
+    clearDedicationInterval();
+    currentDedication = null;
+    
+    broadcastStreamEvent({ action: 'stop', timestamp: Date.now() });
+    
+    if (dedicationQueue.length > 0) {
+        setTimeout(() => playNextDedication(), 500);
+        res.json({ success: true, message: 'Skipped, playing next dedication' });
+    } else {
+        sendMessageGlobal('🎵 All dedications have been played!');
+        res.json({ success: true, message: 'Skipped, queue empty' });
+    }
+});
+
+// Stream control: Play
+app.post('/api/jack/stream-control/play', authMiddleware, async (req, res) => {
+    try {
+        const { songIndex } = req.body;
+        
+        if (songIndex !== undefined) {
+            streamState.currentSongIndex = parseInt(songIndex) || 0;
+        }
+        streamState.status = 'playing';
+        streamState.timestamp = Date.now();
+
+        broadcastStreamEvent({ 
+            action: 'play', 
+            songIndex: streamState.currentSongIndex,
+            timestamp: streamState.timestamp 
+        });
+
+        logger.info(`🎵 Stream control: Play song index ${streamState.currentSongIndex}`);
+        res.json({ success: true, message: 'Play command sent', data: streamState });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to send play command' });
+    }
+});
+
+// Stream control: Pause
+app.post('/api/jack/stream-control/pause', authMiddleware, (req, res) => {
+    try {
+        streamState.status = 'paused';
+        streamState.timestamp = Date.now();
+
+        broadcastStreamEvent({ 
+            action: 'pause',
+            timestamp: streamState.timestamp 
+        });
+
+        logger.info(`⏸️ Stream control: Pause`);
+        res.json({ success: true, message: 'Pause command sent', data: streamState });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to send pause command' });
+    }
+});
+
+// Stream control: Next song
+app.post('/api/jack/stream-control/next', authMiddleware, async (req, res) => {
+    try {
+        // Load songs to get the count
+        let songs = [];
+        try {
+            const data = await fs.readFile(SONGS_METADATA_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            songs = Array.isArray(parsed) ? parsed : (parsed.songs || []);
+        } catch (err) {}
+
+        const totalSongs = songs.length;
+        if (totalSongs === 0) {
+            return res.json({ success: false, message: 'No songs available' });
+        }
+
+        streamState.currentSongIndex = (streamState.currentSongIndex + 1) % totalSongs;
+        streamState.status = 'playing';
+        streamState.timestamp = Date.now();
+
+        broadcastStreamEvent({ 
+            action: 'next', 
+            songIndex: streamState.currentSongIndex,
+            timestamp: streamState.timestamp 
+        });
+
+        logger.info(`⏭️ Stream control: Next song (index ${streamState.currentSongIndex})`);
+        res.json({ success: true, message: 'Next command sent', data: streamState });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to send next command' });
+    }
+});
+
+// Stream control: Stop
+app.post('/api/jack/stream-control/stop', authMiddleware, (req, res) => {
+    try {
+        streamState.status = 'stopped';
+        streamState.timestamp = Date.now();
+
+        broadcastStreamEvent({ 
+            action: 'stop',
+            timestamp: streamState.timestamp 
+        });
+
+        logger.info(`⏹️ Stream control: Stop`);
+        res.json({ success: true, message: 'Stop command sent', data: streamState });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to send stop command' });
+    }
+});
+
+// Get stream config (Agora credentials) - PUBLIC for stream listeners
+app.get('/api/jack/stream-config', async (req, res) => {
+    try {
+        if (!agoraCredentials.appId || !agoraCredentials.channel || !agoraCredentials.token) {
+            return res.json({ 
+                success: false, 
+                message: 'Stream configuration not set. Please add AGORA_APP_ID, AGORA_CHANNEL, AGORA_TOKEN, and AGORA_USER_ID to your .env file.' 
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                appId: agoraCredentials.appId,
+                channel: agoraCredentials.channel,
+                token: agoraCredentials.token,
+                userId: agoraCredentials.userId
+            }
+        });
+    } catch (error) {
+        res.json({ success: false, message: 'Failed to get stream configuration' });
+    }
+});
+
+// ====================
+// CONFIGURATION LOADING
+// ====================
+
+async function fetchSettingsFromDashboard() {
+    try {
+        logger.info(`📡 Fetching settings from dashboard: ${DASHBOARD_URL}/api/jack/settings`);
+        const response = await axios.get(`${DASHBOARD_URL}/api/jack/settings`, { timeout: 10000 });
+        if (response.data?.success && response.data?.data) {
+            logger.info('✅ Settings fetched from dashboard successfully');
+            return response.data.data;
+        }
+        logger.warn('⚠️ Dashboard returned no settings data');
+        return null;
+    } catch (error) {
+        logger.warn(`⚠️ Could not fetch settings from dashboard: ${error.message}`);
+        return null;
+    }
+}
+
+async function loadAllConfigurations() {
+    try {
+        // Try to fetch settings from Replit dashboard first (source of truth)
+        let settings = await fetchSettingsFromDashboard();
+        
+        // Fallback to local file if dashboard fetch fails
+        if (!settings) {
+            logger.info('📁 Falling back to local settings file...');
+            settings = await loadConfigFromFile('settings');
+        }
+        
+        if (settings) {
+            botConfig.settings = settings;
+            // Update mics array based on micCount from settings
+            const micCount = settings.micCount || 10;
+            mics = new Array(micCount).fill(null);
+            logger.info(`⚙️ Loaded settings: Avatars: ${settings.allowAvatars}, Ban Level: ${settings.banLevel}, Guest IDs: ${settings.allowGuestIds}, Level Ban: ${settings.enableLevelBan ?? true}, Mic Count: ${micCount}`);
+            
+            // Save to local file as cache
+            await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+        } else {
+            botConfig.settings = {
+                allowAvatars: true,
+                banLevel: 10,
+                allowGuestIds: false,
+                enableLevelBan: true,
+                micCount: 10,
+                punishments: {
+                    bannedPatterns: 'ban',
+                    lowLevel: 'ban',
+                    noGuestId: 'ban',
+                    noAvatar: 'kick',
+                    spamWords: 'kick'
+                }
+            };
+            mics = new Array(10).fill(null);
+            logger.warn('⚠️ Using hardcoded settings defaults');
+        }
+
+        const botConfiguration = await loadConfigFromFile('bot-config');
+        if (botConfiguration) {
+            botConfig.botConfiguration = botConfiguration;
+            logger.info(`🤖 Bot config loaded: ${botConfiguration.botName} (${botConfiguration.botTone})`);
+        } else {
+            botConfig.botConfiguration = {
+                botName: 'Elijah',
+                botTone: 'upbeat',
+                welcomeMessage: '✨️˚.⭒Wᴇʟᴄᴏᴍᴇ {name}˚✨️'
+            };
+            logger.warn('⚠️ Using hardcoded bot configuration defaults');
+        }
+
+        const admins = await loadConfigFromFile('admins');
+        if (admins && admins.length > 0) {
+            botConfig.admins = admins;
+            logger.info(`📋 Loaded ${admins.length} admins`);
+        }
+
+        const spamWords = await loadWords();
+        if (spamWords && spamWords.length > 0) {
+            botConfig.spamWords = spamWords;
+            logger.info(`🛡️ Loaded ${spamWords.length} spam words`);
+        }
+
+        const bannedPatterns = await loadConfigFromFile('banned-patterns');
+        if (bannedPatterns && bannedPatterns.length > 0) {
+            botConfig.bannedPatterns = bannedPatterns;
+            logger.info(`🚫 Loaded ${bannedPatterns.length} banned patterns`);
+        }
+
+        const exemptions = await loadConfigFromFile('exemptions');
+        if (exemptions && exemptions.length > 0) {
+            botConfig.exemptions = exemptions;
+            logger.info(`🚫 Loaded ${exemptions.length} exemptions`);
+        }
+
+        const loyal_members = await loadConfigFromFile('loyal_members');
+        if (loyal_members && loyal_members.length > 0) {
+            botConfig.loyal_members = loyal_members;
+            logger.info(`🚫 Loaded ${loyal_members.length} loyal members`);
+        }
+
+        const toneTemplates = await loadConfigFromFile('tone-templates');
+        if (toneTemplates) {
+            botConfig.toneTemplates = toneTemplates;
+            logger.info(`🎭 Loaded ${Object.keys(toneTemplates.tones || {}).length} tone templates`);
+        }
+
+        logger.info('✅ All configurations loaded from files');
+
+    } catch (error) {
+        logger.error('❌ Error loading configurations:', error.message);
+    }
+}
+
+async function initializeBot() {
+    try {
+        await loadAllConfigurations();
+        // MySQL is already initialized before server.listen()
+
+        if (!botConfig.settings) {
+            botConfig.settings = {
+                allowAvatars: true,
+                banLevel: 10,
+                allowGuestIds: false,
+                enableLevelBan: true,
+                micCount: 10,
+                punishments: {
+                    bannedPatterns: 'ban',
+                    lowLevel: 'ban',
+                    noGuestId: 'ban',
+                    noAvatar: 'kick',
+                    spamWords: 'kick'
+                }
+            };
+            mics = new Array(10).fill(null);
+        }
+
+        if (!botConfig.botConfiguration) {
+            botConfig.botConfiguration = {
+                botName: 'Elijah',
+                botTone: 'upbeat'
+            };
+        }
+
+        if (!botConfig.exemptions) {
+            botConfig.exemptions = [];
+        }
+
+        logger.info('🎯 Bot initialization complete');
+
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        isReconnecting = false;
+        intentionalDisconnect = false;
+
+        connectWebSocket();
+    } catch (error) {
+        logger.error('❌ Bot initialization failed:', error.message);
+    }
+}
+
+async function loadConfigFromFile(type) {
+    try {
+        const filePath = CONFIG_FILES[type];
+        const data = await fs.readFile(filePath, 'utf8');
+
+        if (type === 'spam-words') {
+            return data.split('\n').filter(line => line.trim() !== '');
+        } else if (type === 'banned-patterns' || type === 'admins' || type === 'exemptions' || type === 'loyal_members') {
+            return data.split(',').map(item => item.trim()).filter(item => item !== '');
+        } else if (type === 'settings' || type === 'bot-config' || type === 'tone-templates') {
+            return JSON.parse(data);
+        }
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.info(`📁 No ${type} file found, creating defaults`);
+
+            if (type === 'settings') {
+                return await createDefaultSettings();
+            } else if (type === 'bot-config') {
+                return await createDefaultBotConfig();
+            }
+        } else {
+            logger.error(`❌ Error loading ${type}:`, error.message);
+        }
+        return null;
+    }
+}
+
+// ====================
+// BOT UTILITY FUNCTIONS
+// ====================
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isNotEmptyJson(obj) {
+    return obj && typeof obj === 'object' && Object.keys(obj).length > 0;
+}
+
+async function loadMembersData() {
+    try {
+        const data = await fs.readFile('azoozi.json', 'utf8');
+        membersData = JSON.parse(data);
+        logger.info('Members data loaded successfully.');
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.info('No members.json file found.');
+            membersData = [];
+        } else {
+            console.error('❌ Error loading members data:', error.message);
+            membersData = [];
+        }
+    }
+}
+
+function isMemberUID(ui) {
+    return membersData.some(member => member.ui === ui);
+}
+
+async function loadPlayers() {
+    try {
+        const data = await fs.readFile('snuid_values.txt', 'utf8');
+        const codesArray = data.split(/\r?\n/).filter(line => line.trim() !== '');
+        return codesArray;
+    } catch (error) {
+        console.error('Error reading the file:', error);
+        return [];
+    }
+}
+
+async function createDefaultBotConfig() {
+    const defaultBotConfig = {
+        botName: 'Elijah',
+        botTone: 'upbeat',
+        welcomeMessage: '✨️˚.⭒Wᴇʟᴄᴏᴍᴇ {name}˚✨️',
+        createdAt: new Date().toISOString()
+    };
+
+    try {
+        await fs.writeFile('./bot_configuration.json', JSON.stringify(defaultBotConfig, null, 2), 'utf8');
+        logger.info('Created default bot_configuration.json file');
+        return defaultBotConfig;
+    } catch (error) {
+        logger.error('Error creating default bot_configuration.json:', error.message);
+        return null;
+    }
+}
+
+function getName(GC) {
+    for (const UID in savedData) {
+        if (UID === GC) {
+            const currentName = savedData[UID].NM;
+            return currentName;
+        }
+    }
+    return null;
+}
+
+function getNames(GC) {
+    if (!savedData[GC]) {
+        return `No data found for GC: ${GC}`;
+    }
+    for (const UID in savedData) {
+        if (UID === GC) {
+            const currentName = savedData[UID].NM;
+            const oldNames = savedData[UID].oldNames?.length ? savedData[UID].oldNames.join(", ") : "None";
+            result = `UID: ${UID} - Current Name: ${currentName}, Old Names: ${oldNames}\n`;
+        }
+    }
+    return result.trim();
+}
+
+function removeBotName(message) {
+    const botName = botConfig.botConfiguration?.botName || 'Elijah';
+    const regex = new RegExp(`^${botName}\\s*`, 'i');
+    return message.replace(regex, "");
+}
+
+function gptTone(user_id) {
+    const botName = botConfig.botConfiguration?.botName || 'Elijah';
+    const botTone = botConfig.botConfiguration?.botTone || 'upbeat';
+
+    const template = botConfig.toneTemplates?.tones?.[botTone] ||
+        "You are {botName}(FEMALE), a fun, upbeat friend—not an AI. Keep replies short, cheerful, and playful.";
+
+    return template.replace('{botName}', botName);
+}
+
+function splitMessage(message, maxLength = 100) {
+    const chunks = [];
+    let currentChunk = '';
+    const words = message.split(' ');
+
+    for (const word of words) {
+        if ((currentChunk + word).length > maxLength) {
+            if (currentChunk.trim()) {
+                chunks.push(currentChunk.trim());
+            }
+            currentChunk = word + ' ';
+        } else {
+            currentChunk += word + ' ';
+        }
+    }
+
+    if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+}
+
+async function getResponse(message, user_id) {
+    try {
+        if (!conversationHistory.has(user_id)) {
+            conversationHistory.set(user_id, [
+                { role: "system", content: gptTone(user_id) }
+            ]);
+        }
+
+        const history = conversationHistory.get(user_id);
+        history.push({ role: "user", content: message });
+
+        const recentHistory = history.slice(-11);
+
+        const response = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: recentHistory,
+            max_tokens: 200,
+            temperature: 0.8,
+        });
+
+        const reply = response.choices?.[0]?.message?.content?.trim() || "Sorry, I didn't catch that.";
+        history.push({ role: "assistant", content: reply });
+
+        return reply;
+    } catch (error) {
+        console.error("Error fetching ChatGPT response:", error.message || error);
+        return "Sorry, I couldn't process that.";
+    }
+}
+
+async function addSpamWord(word) {
+    try {
+        await fs.appendFile(spamPath, `${word}\n`);
+        botConfig.spamWords.push(word);
+        logger.info(`Word "${word}" added successfully.`);
+    } catch (err) {
+        console.error('❌ Error adding word:', err.message);
+    }
+}
+
+function findPlayerID(UID) {
+    for (const GC in savedData) {
+        if (savedData[GC].UID === UID) {
+            return GC;
+        }
+    }
+}
+
+function findPlayerName(UID) {
+    for (const GC in savedData) {
+        if (savedData[GC].UID === UID) {
+            return savedData[GC].NM;
+        }
+    }
+}
+
+// Spam Kick Logs
+const SPAM_KICKS_FILE = './data/spam_kicks.json';
+
+async function loadSpamKicks() {
+    try {
+        const data = await fs.readFile(SPAM_KICKS_FILE, 'utf-8');
+        const parsed = JSON.parse(data);
+        if (!Array.isArray(parsed)) {
+            logger.warn('Spam kicks file is not an array, initializing empty');
+            return [];
+        }
+        return parsed;
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            return [];
+        }
+        if (err instanceof SyntaxError) {
+            logger.error(`Spam kicks file is corrupted: ${err.message}`);
+            try {
+                await fs.rename(SPAM_KICKS_FILE, `${SPAM_KICKS_FILE}.backup`);
+                logger.info('Backed up corrupted spam kicks file');
+            } catch (backupErr) {
+                logger.error(`Failed to backup corrupted file: ${backupErr.message}`);
+            }
+        }
+        return [];
+    }
+}
+
+async function saveSpamKicks(kicks) {
+    try {
+        await fs.mkdir('./data', { recursive: true });
+        await fs.writeFile(SPAM_KICKS_FILE, JSON.stringify(kicks, null, 2), 'utf-8');
+    } catch (err) {
+        logger.error(`Failed to save spam kicks: ${err.message}`);
+    }
+}
+
+async function logSpamKick(UID, message, matchedWord, actionType) {
+    try {
+        const kicks = await loadSpamKicks();
+        const username = findPlayerName(UID) || 'Unknown';
+        
+        const kickEntry = {
+            id: crypto.randomUUID(),
+            username: username,
+            uid: UID,
+            message: message,
+            matchedWord: matchedWord,
+            action: actionType,
+            timestamp: new Date().toISOString()
+        };
+        
+        kicks.unshift(kickEntry);
+        
+        if (kicks.length > 500) {
+            kicks.length = 500;
+        }
+        
+        await saveSpamKicks(kicks);
+        logger.info(`📝 Logged spam ${actionType}: ${username} - "${message}" (matched: ${matchedWord})`);
+    } catch (err) {
+        logger.error(`Failed to log spam kick: ${err.message}`);
+    }
+}
+
+// Kick/Ban Logs
+async function loadKickBanLogs() {
+    try {
+        const data = await fs.readFile(KICK_BAN_LOGS_FILE, 'utf-8');
+        const parsed = JSON.parse(data);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+        return parsed;
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            return [];
+        }
+        return [];
+    }
+}
+
+async function saveKickBanLogs(logs) {
+    try {
+        await fs.writeFile(KICK_BAN_LOGS_FILE, JSON.stringify(logs, null, 2), 'utf-8');
+    } catch (err) {
+        logger.error(`Failed to save kick/ban logs: ${err.message}`);
+    }
+}
+
+function getNameFromUID(UID) {
+    if (!UID) {
+        return 'Unknown';
+    }
+    if (UID === my_uid || UID === process.env.BOT_UID) {
+        return 'Bot';
+    }
+    for (const GC in savedData) {
+        if (savedData[GC].UID === UID) {
+            return savedData[GC].NM;
+        }
+    }
+    return 'Unknown';
+}
+
+async function logKickBanEvent(jsonMessage) {
+    try {
+        const logs = await loadKickBanLogs();
+        const isBan = jsonMessage.PY?.B === true;
+        const adminUID = jsonMessage.PY?.AID || '';
+        const userUID = jsonMessage.PY?.UID || '';
+        const clubId = jsonMessage.PY?.CID || '';
+        
+        const adminName = getNameFromUID(adminUID);
+        const userName = getNameFromUID(userUID);
+        
+        const logEntry = {
+            id: crypto.randomUUID(),
+            action: isBan ? 'ban' : 'kick',
+            adminName: adminName,
+            adminUID: adminUID,
+            userName: userName,
+            userUID: userUID,
+            clubId: clubId,
+            timestamp: new Date().toISOString()
+        };
+        
+        logs.unshift(logEntry);
+        
+        if (logs.length > 1000) {
+            logs.length = 1000;
+        }
+        
+        await saveKickBanLogs(logs);
+        logger.info(`📝 Logged ${logEntry.action}: ${userName} by ${adminName}`);
+    } catch (err) {
+        logger.error(`Failed to log kick/ban event: ${err.message}`);
+    }
+}
+
+async function loadWords() {
+    try {
+        const data = await fs.readFile(spamPath, 'utf-8');
+        return data.split('\n').filter(line => line.trim() !== '');
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            logger.info('No words file found. Returning an empty array.');
+            return [];
+        } else {
+            console.error('❌ Error reading file:', err.message);
+            return [];
+        }
+    }
+}
+
+async function loadSavedData(path) {
+    try {
+        await fs.access(path);
+        const rawData = await fs.readFile(path, 'utf8');
+        savedData = JSON.parse(rawData);
+        logger.info('Data loaded.');
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            logger.info('📁 No existing data file found. Starting fresh.');
+            savedData = {};
+        } else if (error.name === 'SyntaxError') {
+            console.error('❌ Error parsing JSON data:', error.message);
+            savedData = {};
+        } else {
+            console.error('❌ Error reading file:', error.message);
+            savedData = {};
+        }
+    }
+}
+
+async function saveData(data, path) {
+    try {
+        await fs.writeFile(path, JSON.stringify(data, null, 2));
+    } catch (error) {
+        console.error('❌ Error saving data:', error.message);
+    }
+}
+
+function checkAvatar(number) {
+    return number.toString().startsWith('1000');
+}
+
+async function addMessage(line) {
+    try {
+        await fs.appendFile('chat.txt', line + '\n');
+    } catch (err) {
+        console.error('Error appending to file:', err);
+        throw err;
+    }
+}
+
+// ====================
+// WEBSOCKET CONNECTION
+// ====================
+
+async function connectWebSocket() {
+    if (isReconnecting) {
+        logger.info('⏳ Reconnection already in progress, skipping duplicate attempt');
+        return false;
+    }
+    isReconnecting = true;
+    currentSocketId++;
+    const thisSocketId = currentSocketId;
+
+    return new Promise((resolve, reject) => {
+        try {
+            if (botState.ws) {
+                try {
+                    botState.ws.removeAllListeners();
+                    botState.ws.close();
+                } catch (e) {}
+                botState.ws = null;
+            }
+
+            const url = 'ws://ws.ls.superkinglabs.com/ws';
+            const ws = new WebSocket(url);
+
+            botState.ws = ws;
+
+            ws.on('open', async () => {
+                if (thisSocketId !== currentSocketId) {
+                    logger.info(`🚫 Stale socket ${thisSocketId} opened after newer ${currentSocketId}, closing`);
+                    ws.removeAllListeners();
+                    ws.close();
+                    isReconnecting = false;
+                    resolve(false);
+                    return;
+                }
+
+                isReconnecting = false;
+                logger.info(`🔌 WebSocket connection opened (socket #${thisSocketId})`);
+                await logSocketStatus('disconnected', 'Socket opened normally');
+
+                // Clear any existing intervals before creating new ones
+                if (wsIntervals.length > 0) {
+                    logger.info(`🧹 Clearing ${wsIntervals.length} old WebSocket intervals`);
+                    wsIntervals.forEach(interval => clearInterval(interval));
+                    wsIntervals = [];
+                }
+
+                // Queue processors
+                const removalQueueProcessor = setInterval(() => {
+                    if (pendingRemovals.length > 0) {
+                        logger.info(`🔄 Processing ${pendingRemovals.length} pending removals`);
+                        pendingRemovals.forEach(uid => {
+                            removeMember(uid);
+                            logger.info(`✅ Executed removal for UID: ${uid}`);
+                        });
+                        pendingRemovals = [];
+                    }
+                }, 2000);
+                wsIntervals.push(removalQueueProcessor);
+
+                let isProcessingBans = false;
+                let previousBanQueueLength = 0;
+
+                const banQueueProcessor = setInterval(async () => {
+                    if (pendingBans.length > 0 && !isProcessingBans) {
+                        isProcessingBans = true;
+                        previousBanQueueLength = pendingBans.length;
+
+                        const batchSize = 5;
+                        const batch = pendingBans.splice(0, batchSize);
+
+                        logger.info(`🔨 Processing ${batch.length} bans (${pendingBans.length} remaining in queue)`);
+
+                        for (const uid of batch) {
+                            executeBan(uid);
+                            await sleep(50);
+                        }
+
+                        isProcessingBans = false;
+
+                        if (pendingBans.length === 0 && previousBanQueueLength > 0) {
+                            logger.info('✅ Ban queue empty');
+                            botState.stats.usersKicked += previousBanQueueLength;
+                            previousBanQueueLength = 0;
+                        }
+                    }
+                }, 300);
+                wsIntervals.push(banQueueProcessor);
+
+                let isProcessingKicks = false;
+                let previousKickQueueLength = 0;
+
+                const kickQueueProcessor = setInterval(async () => {
+                    if (pendingKicks.length > 0 && !isProcessingKicks) {
+                        isProcessingKicks = true;
+                        previousKickQueueLength = pendingKicks.length;
+
+                        const batchSize = 5;
+                        const batch = pendingKicks.splice(0, batchSize);
+
+                        logger.info(`👢 Processing ${batch.length} kicks (${pendingKicks.length} remaining in queue)`);
+
+                        for (const uid of batch) {
+                            executeKick(uid);
+                            await sleep(50);
+                        }
+
+                        isProcessingKicks = false;
+
+                        if (pendingKicks.length === 0 && previousKickQueueLength > 0) {
+                            logger.info('✅ Kick queue empty');
+                            botState.stats.usersKicked += previousKickQueueLength;
+                            previousKickQueueLength = 0;
+                        }
+                    }
+                }, 300);
+                wsIntervals.push(kickQueueProcessor);
+
+                let isProcessingUnbans = false;
+                let previousUnbanQueueLength = 0;
+
+                const unbanQueueProcessor = setInterval(async () => {
+                    if (pendingUnbans.length > 0 && !isProcessingUnbans) {
+                        isProcessingUnbans = true;
+                        previousUnbanQueueLength = pendingUnbans.length;
+
+                        const batchSize = 5;
+                        const batch = pendingUnbans.splice(0, batchSize);
+
+                        logger.info(`🔓 Processing ${batch.length} unbans (${pendingUnbans.length} remaining in queue)`);
+
+                        for (const uid of batch) {
+                            executeUnban(uid);
+                            await sleep(50);
+                        }
+
+                        isProcessingUnbans = false;
+
+                        if (pendingUnbans.length === 0 && previousUnbanQueueLength > 0) {
+                            logger.info('✅ Unban queue empty');
+                            previousUnbanQueueLength = 0;
+                        }
+                    }
+                }, 300);
+                wsIntervals.push(unbanQueueProcessor);
+
+                let isProcessingLevelChecks = false;
+                let previousLevelCheckQueueLength = 0;
+
+                const levelCheckQueueProcessor = setInterval(async () => {
+                    if (pendingLevelChecks.length > 0 && !isProcessingLevelChecks) {
+                        isProcessingLevelChecks = true;
+                        previousLevelCheckQueueLength = pendingLevelChecks.length;
+
+                        const batchSize = 5;
+                        const batch = pendingLevelChecks.splice(0, batchSize);
+
+                        logger.info(`📊 Processing ${batch.length} level checks (${pendingLevelChecks.length} remaining in queue)`);
+
+                        for (const uid of batch) {
+                            executeCheckLevel(uid);
+                            await sleep(50);
+                        }
+
+                        isProcessingLevelChecks = false;
+
+                        if (pendingLevelChecks.length === 0 && previousLevelCheckQueueLength > 0) {
+                            logger.info('✅ Level check queue empty');
+                            previousLevelCheckQueueLength = 0;
+                        }
+                    }
+                }, 300);
+                wsIntervals.push(levelCheckQueueProcessor);
+
+                await loadSavedData(path_users);
+                await loadMembersData();
+                await loadMessageCounter();
+                const people = await loadPlayers();
+
+                logger.info("Arrays Loaded.");
+                logger.info('Bot Started.');
+
+                // Send authentication
+                const auth = JSON.stringify({
+                    RH: "jo",
+                    PU: "",
+                    PY: JSON.stringify({
+                        EP: `${bot_ep}`,
+                        KEY: `${bot_key}`
+                    }),
+                    EN: true
+                });
+
+                sendWebSocketMessage(auth);
+                console.log(`Authentication sent at ${new Date().toLocaleString()}`);
+
+                resolve(true);
+            });
+
+            ws.on('message', async (data) => {
+                if (thisSocketId !== currentSocketId) {
+                    return;
+                }
+                try {
+                    const messageString = data.toString();
+                    let jsonMessage;
+
+                    try {
+                        // Check if it's base64
+                        if (/^[A-Za-z0-9+/]+=*$/.test(messageString.trim())) {
+                            const decoded = Buffer.from(messageString, 'base64').toString('utf-8');
+                            jsonMessage = JSON.parse(decoded);
+                        } else {
+                            jsonMessage = JSON.parse(messageString);
+                        }
+                    } catch (parseErr) {
+                        logger.error('❌ Failed to parse message:', parseErr.message);
+                        return;
+                    }
+
+                    console.log(`${new Date().toLocaleString('en-PK', { timeZone: 'Asia/Karachi' })}:`, jsonMessage);
+
+                    // Heartbeat handler - ping the socket back
+                    if (jsonMessage?.RH === 'hb') {
+                        const pong = JSON.stringify({ RH: 'ha', PU: '', PY: {} });
+                        const base64Pong = Buffer.from(pong, 'utf8').toString('base64');
+                        ws.send(base64Pong);
+                        return;
+                    }
+
+                    // Authentication handling
+                    if (jsonMessage?.PY?.hasOwnProperty('IA')) {
+                        console.log('\n🔐 Authentication Required');
+                        logger.info('🔐 Authentication required - waiting for frontend input');
+                        authRequired = true;
+                        authMessage = messageString;
+                    }
+
+                    if (jsonMessage?.RH === "AUA") {
+                        console.log(`Bot connected at ${new Date().toLocaleString('en-PK', { timeZone: 'Asia/Karachi' })}`);
+                        await logSocketStatus('connected', 'WebSocket connection established');
+
+                        joinClub(club_code);
+
+                        const refreshInterval = setInterval(() => {
+                            sendWebSocketMessage(JSON.stringify({ RH: 'ha', PU: '', PY: {} }));
+                        }, 25000);
+                        wsIntervals.push(refreshInterval);
+                    }
+
+                    if (jsonMessage?.PY?.hasOwnProperty('ML')) {
+                        saveClubMembers(jsonMessage);
+                    }
+
+                    // Handle user join event (PU: 'UJ')
+                    if (jsonMessage?.RH === "CBC" && jsonMessage?.PU === "UJ" && jsonMessage?.PY?.UID) {
+                        handleUserJoin(jsonMessage.PY.UID);
+                    }
+
+                    // Handle user leave event (PU: 'UL')
+                    if (jsonMessage?.RH === "CBC" && jsonMessage?.PU === "UL" && jsonMessage?.PY?.UID) {
+                        await handleUserLeave(jsonMessage.PY.UID);
+                    }
+
+                    if (jsonMessage?.PY?.hasOwnProperty('ER') &&
+                        (jsonMessage.PY?.ER === "DISCONNECTED" || jsonMessage.PY?.ER === "disconnected")) {
+                        process.exit(0);
+                    }
+
+                    botState.stats.messagesProcessed++;
+
+                    if (isNotEmptyJson(jsonMessage)) {
+                        // Check banned patterns
+                        if (jsonMessage?.PY?.NM) {
+                            const userName = String(jsonMessage.PY.NM);
+                            const hasBannedPattern = botConfig.bannedPatterns.some(pattern =>
+                                userName.includes(pattern)
+                            );
+
+                            if (hasBannedPattern) {
+                                applyPunishment(jsonMessage.PY.UID, 'bannedPatterns');
+                                botState.stats.usersKicked++;
+                            }
+                        }
+
+                        if (jsonMessage.PY?.CUP) {
+                            const enableLevelBan = botConfig.settings?.enableLevelBan ?? true;
+                            if (enableLevelBan) {
+                                const userGC = findPlayerID(jsonMessage.PY.UID);
+                                const isExemptFromLevel = userGC && botConfig.exemptions?.includes(userGC);
+                                
+                                if (!isExemptFromLevel && Number(jsonMessage.PY.CUP.PD.L) < botConfig.settings.banLevel) {
+                                    applyPunishment(jsonMessage.PY.UID, 'lowLevel');
+                                }
+                            }
+                        }
+
+                        if (jsonMessage.RH === "CBC" && jsonMessage.PU === "TMS" && jsonMessage?.PY?.hasOwnProperty('ER')) {
+                            const failed_mic = jsonMessage.PY.IN;
+                            const next_target = Number(failed_mic) + 1;
+                            joinAdminMic(next_target);
+                        }
+
+                        if (jsonMessage.RH === "CBC" && jsonMessage.PU === "GLL") {
+                            saveGifterList(jsonMessage);
+                        }
+
+                        if (jsonMessage && jsonMessage?.PY?.hasOwnProperty('ER') && jsonMessage.PU !== "TMS") {
+                            refresh();
+                        }
+
+                        if (jsonMessage.PY && jsonMessage.PY.GC && jsonMessage.PY.NM) {
+                            const { GC, NM, UID, SNUID, AV } = jsonMessage.PY;
+                            checkLevel(UID);
+
+                            // Check blacklist first (ban immediately) - only if blacklist feature enabled
+                            if (isFeatureEnabled('blacklist') && await isBlacklisted(GC)) {
+                                logger.info(`🚫 Blacklisted user detected: ${NM} (GC: ${GC})`);
+                                banUser(UID);
+                                sendMessage(`🚫 ${NM} is blacklisted and has been banned.`);
+                                return;
+                            }
+
+                            // Check hitlist (kick immediately) - only if hitlist feature enabled
+                            if (isFeatureEnabled('hitlist') && await isOnHitlist(GC)) {
+                                logger.info(`👢 Hitlist user detected: ${NM} (GC: ${GC})`);
+                                kickUser(UID);
+                                sendMessage(`👢 ${NM} is on hitlist and has been kicked.`);
+                                return;
+                            }
+
+                            const isExempt = botConfig.exemptions?.includes(GC) || false;
+
+                            let shouldWelcome = true;
+                            let shouldBan = false;
+                            let violationType = 'noGuestId';
+
+                            if (!isExempt) {
+                                if (!botConfig.settings.allowGuestIds && SNUID === undefined) {
+                                    shouldBan = true;
+                                    shouldWelcome = false;
+                                    violationType = 'noGuestId';
+                                } else if (!botConfig.settings.allowAvatars && checkAvatar(AV)) {
+                                    applyPunishment(UID, 'noAvatar');
+                                    shouldWelcome = false;
+                                }
+                            }
+
+                            const hasBannedPattern = botConfig.bannedPatterns.some(pattern =>
+                                String(NM).includes(pattern)
+                            );
+
+                            if (hasBannedPattern) {
+                                shouldBan = true;
+                                shouldWelcome = false;
+                                violationType = 'bannedPatterns';
+                            }
+
+                            if (shouldBan) {
+                                applyPunishment(UID, violationType);
+                            }
+
+                            if (shouldWelcome) {
+                                sendMessage(formatWelcomeMessage(NM));
+                            }
+
+                            if (!savedData[GC]) {
+                                try {
+                                    savedData[GC] = {
+                                        NM,
+                                        UID,
+                                        oldNames: [],
+                                        lastSeen: new Date().toISOString()
+                                    };
+                                } catch (err) { console.log(err); }
+                            } else {
+                                const currentName = savedData[GC].NM;
+                                if (currentName !== NM) {
+                                    if (!savedData[GC].oldNames) {
+                                        savedData[GC].oldNames = [];
+                                    }
+                                    savedData[GC].oldNames.push(currentName);
+                                    savedData[GC].NM = NM;
+                                }
+                                savedData[GC].lastSeen = new Date().toISOString();
+                            }
+                            saveData(savedData, path_users);
+                        }
+
+                        if (jsonMessage.RH === "CBC" && jsonMessage.PU === "GBU") {
+                            if (jsonMessage.PY?.BUL) {
+                                const bannedUsers = jsonMessage.PY.BUL;
+                                bannedUserIds = Object.keys(bannedUsers);
+                                if (check_ban_list) {
+                                    sendMessage("Ban list fetched.");
+                                    check_ban_list = false;
+                                }
+                            }
+                        }
+
+                        if (jsonMessage.RH === "CBC" && jsonMessage.PU === "KBU") {
+                            if (jsonMessage.PY?.UID === my_uid) {
+                                onMic = false;
+                                streamState.status = 'paused';
+                                streamState.timestamp = Date.now();
+                                logger.info(`🔇 Bot kicked from mic - stream paused`);
+                            }
+                            
+                            // Log kick/ban event (log all events, even if AID is missing)
+                            logKickBanEvent(jsonMessage);
+                        }
+
+                        if (jsonMessage?.PU === "CJA" || jsonMessage?.PU === "REA") {
+                            if (jsonMessage?.PU === "CJA"){
+                                onMic = false;
+                            }
+                            const agora_channel = jsonMessage.PY.VC.VCH;
+                            const agora_token = jsonMessage.PY.VC.AT;
+
+                            // If there's a pending VC credential request, resolve it
+                            if (pendingVCRequest && jsonMessage?.PU === "CJA") {
+                                pendingVCRequest.resolve({
+                                    channel: agora_channel,
+                                    token: agora_token,
+                                    appId: agoraCredentials.appId,
+                                    clubName: jsonMessage?.PY?.NM || 'Unknown'
+                                });
+                            }
+                            
+                            // Save Agora credentials to .env AND update in-memory object
+                            if (agora_channel && agora_token) {
+                                await updateEnvCredentials({ AGORA_CHANNEL: agora_channel, AGORA_TOKEN: agora_token });
+                                // Update global mutable object so /rec and stream-config use new credentials
+                                updateAgoraCredentials(agora_channel, agora_token);
+                                logger.info(`🎤 Agora credentials updated: Channel=${agora_channel.substring(0, 10)}...`);
+                            }
+                            
+                            isProcessingBans = false;
+                            const ulData = jsonMessage?.PY?.OUL;
+                            const c_mics = jsonMessage.PY.MSI;
+                            club_name = jsonMessage?.PY?.NM;
+                            if (club_name) {
+                                if (mysqlPool) {
+                                    mysqlPool.query(
+                                        `UPDATE socket_status SET club_name = ? WHERE bot_uid = ?`,
+                                        [club_name, my_uid || 'unknown']
+                                    ).catch(err => logger.error('Failed to update club_name in DB:', err.message));
+                                }
+                                if (club_name !== process.env.CLUB_NAME) {
+                                    updateEnvCredentials({ CLUB_NAME: club_name })
+                                        .catch(err => logger.error('Failed to update CLUB_NAME in .env:', err.message));
+                                }
+                            }
+                            let m_index = 1;
+                            c_mics.forEach(mc => {
+                                if (mc.VCU === "" && mc.IL === false) {
+                                    lockMic(m_index);
+                                }
+                                m_index++;
+                            });
+
+                            if (jsonMessage?.PY?.SAL && typeof jsonMessage.PY.SAL === 'object') {
+                                clubAdmins = Object.keys(jsonMessage.PY.SAL);
+                            }
+
+                            if (jsonMessage?.PY?.AL && typeof jsonMessage.PY.AL === 'object') {
+                                clubAdmins.push(...Object.keys(jsonMessage.PY.AL));
+                            }
+
+                            if (ulData) {
+                                const users = Object.values(ulData);
+
+                                for (const user of users) {
+                                    if (String(user.UID) !== my_uid) {
+                                        const hasBannedPattern = botConfig.bannedPatterns.some(pattern =>
+                                            String(user.NM).includes(pattern)
+                                        );
+
+                                        if (hasBannedPattern) {
+                                            applyPunishment(user.UID, 'bannedPatterns');
+                                            botState.stats.usersKicked++;
+                                        } else {
+                                            checkLevel(user.UID);
+                                        }
+
+                                        // Add 500ms delay between each user
+                                        await sleep(500);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (String(jsonMessage.PY.MG).toLowerCase().startsWith(String(botConfig.botConfiguration?.botName).toLowerCase())) {
+                            const user_id = findPlayerID(jsonMessage.PY.UID);
+                            try {
+                                const refinedMessage = removeBotName(String(jsonMessage.PY.MG).toLowerCase());
+                                const tempMsg = await getResponse(refinedMessage, jsonMessage.PY.UID);
+                                const messageChunks = splitMessage(tempMsg, 150);
+
+                                if (messageChunks.length > 0) {
+                                    sendMessage(messageChunks[0]);
+
+                                    for (let i = 1; i < messageChunks.length; i++) {
+                                        setTimeout(() => {
+                                            sendMessage(messageChunks[i]);
+                                        }, i * 100);
+                                    }
+                                }
+                            } catch (err) { }
+                        }
+
+                        else if (jsonMessage.RH === "CBC" && jsonMessage.PU === "SMI") {
+                            joinMic();
+                        }
+
+                        else if (jsonMessage.RH === "CBC" && jsonMessage.PU === "TMS") {
+                            const target_uid = jsonMessage.PY.UID;
+                            if(jsonMessage.PY.FC) {
+                                onMic = false;
+                            }
+                            else if (target_uid === my_uid && jsonMessage.PY.IN !== undefined) {
+                                botMic = Number(jsonMessage.PY.IN);
+                                onMic = true;
+                                logger.info(`🎤 Bot joined mic #${botMic}`);
+                                
+                                if (jsonMessage.PY.VC && jsonMessage.PY.VC.VCH && jsonMessage.PY.VC.AT) {
+                                    const newChannel = jsonMessage.PY.VC.VCH;
+                                    const newToken = jsonMessage.PY.VC.AT;
+                                    updateAgoraCredentials(newChannel, newToken);
+                                    
+                                    broadcastStreamEvent({
+                                        action: 'credentials',
+                                        channel: newChannel,
+                                        token: newToken,
+                                        appId: agoraCredentials.appId,
+                                        userId: agoraCredentials.userId,
+                                        timestamp: Date.now()
+                                    });
+                                    logger.info(`📡 Broadcast new Agora credentials to stream clients`);
+                                }
+                            }
+                        }
+
+                        if (jsonMessage.PY && jsonMessage.PY.MG) {
+                            let message = jsonMessage.PY.MG;
+                            let UID = jsonMessage.PY.UID;
+
+                            // Increment daily message counter
+                            incrementMessageCount();
+
+                            const user_name = findPlayerName(UID);
+                            const user_id = findPlayerID(UID);
+
+                            if (user_id && savedData[user_id]) {
+                                savedData[user_id].lastSeen = new Date().toISOString();
+                                saveData(savedData, path_users);
+                            }
+
+                            // Add timestamp in PKT (UTC+5)
+                            const now = new Date();
+                            const pktTime = new Date(now.getTime() + (5 * 60 * 60 * 1000));
+                            const timestamp = pktTime.toISOString().replace('T', ' ').substring(0, 19);
+                            addMessage(`[${timestamp}] ${user_name}: ${message}`);
+
+                            // Bot commands handling - check feature toggles (short-circuit if disabled)
+                            if (String(message).startsWith("/") && !isCommandEnabled(String(message))) {
+                                const featureKey = getFeatureForCommand(String(message));
+                                if (featureKey) {
+                                    sendMessage(`⚠️ ${featureToggles[featureKey].label} feature is currently disabled.`);
+                                }
+                            }
+                            else if (String(message).startsWith("/mic") && isCommandEnabled(String(message))) {
+                                let UID = jsonMessage.PY.UID;
+                                const user_mic_id = findPlayerID(UID);
+                                if (isMemberUID(UID)) {
+                                    inviteMic(UID);
+                                } else if (user_mic_id && botConfig.loyal_members?.includes(user_mic_id)) {
+                                    inviteMic(UID);
+                                }
+                            }
+
+                            if (String(message).startsWith("/admins")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins && botConfig.admins.includes(user_id)) {
+                                    if (botConfig.admins.length > 0) {
+                                        botConfig.admins.forEach((admin, index) => {
+                                            setTimeout(() => {
+                                                const admin_name = getName(admin);
+                                                sendMessage(`Admin ${index + 1}: ${admin_name} [${admin}]`);
+                                            }, index * 100);
+                                        });
+                                    } else {
+                                        sendMessage('No admins configured');
+                                    }
+                                }
+                            }
+
+                            else if (String(message).startsWith("/mtop") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        const membersData = await fs.readFile(MEMBERS_FILE, 'utf8');
+                                        const members = JSON.parse(membersData);
+                                        const currentMonth = getCurrentMonth();
+                                        
+                                        const membersWithTime = members
+                                            .filter(m => m.timeTracking && m.timeTracking.lastMonthReset === currentMonth && m.timeTracking.monthlySeconds > 0)
+                                            .map(m => ({
+                                                name: m.NM,
+                                                seconds: m.timeTracking.monthlySeconds
+                                            }))
+                                            .sort((a, b) => b.seconds - a.seconds)
+                                            .slice(0, 10);
+                                        
+                                        if (membersWithTime.length === 0) {
+                                            sendMessage('No members with time tracked this month.');
+                                        } else {
+                                            sendMessage(`🏆 Top ${membersWithTime.length} Members (This Month):`);
+                                            membersWithTime.forEach((member, index) => {
+                                                setTimeout(() => {
+                                                    sendMessage(`${index + 1}. ${member.name} - ${formatDuration(member.seconds)}`);
+                                                }, (index + 1) * 100);
+                                            });
+                                        }
+                                    } catch (error) {
+                                        sendMessage('Error loading member data.');
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/wtop") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        const membersData = await fs.readFile(MEMBERS_FILE, 'utf8');
+                                        const members = JSON.parse(membersData);
+                                        const currentWeek = getCurrentWeek();
+                                        
+                                        const membersWithTime = members
+                                            .filter(m => m.timeTracking && m.timeTracking.lastWeekReset === currentWeek && m.timeTracking.weeklySeconds > 0)
+                                            .map(m => ({
+                                                name: m.NM,
+                                                seconds: m.timeTracking.weeklySeconds
+                                            }))
+                                            .sort((a, b) => b.seconds - a.seconds)
+                                            .slice(0, 10);
+                                        
+                                        if (membersWithTime.length === 0) {
+                                            sendMessage('No members with time tracked this week.');
+                                        } else {
+                                            sendMessage(`🏆 Top ${membersWithTime.length} Members (This Week):`);
+                                            membersWithTime.forEach((member, index) => {
+                                                setTimeout(() => {
+                                                    sendMessage(`${index + 1}. ${member.name} - ${formatDuration(member.seconds)}`);
+                                                }, (index + 1) * 100);
+                                            });
+                                        }
+                                    } catch (error) {
+                                        sendMessage('Error loading member data.');
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/member") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        const player_id = String(message).replace(/^\/member\s*/, '').trim().toUpperCase();
+
+                                        if (!player_id) {
+                                            sendMessage("Usage: /member [PLAYER_ID]");
+                                            return;
+                                        }
+
+                                        const membersData = await fs.readFile(MEMBERS_FILE, 'utf8');
+                                        const members = JSON.parse(membersData);
+                                        const currentWeek = getCurrentWeek();
+                                        const currentMonth = getCurrentMonth();
+
+                                        const memberFromFile = members.find(m => m.GC === player_id);
+                                        const memberFromSaved = savedData[player_id];
+
+                                        if (!memberFromFile && !memberFromSaved) {
+                                            sendMessage(`❌ No data found for player ID: ${player_id}`);
+                                            return;
+                                        }
+
+                                        const name = memberFromFile?.NM || memberFromSaved?.NM || 'Unknown';
+
+                                        let weeklyTime = '0s';
+                                        let monthlyTime = '0s';
+
+                                        if (memberFromFile?.timeTracking) {
+                                            const tt = memberFromFile.timeTracking;
+                                            if (tt.lastWeekReset === currentWeek && tt.weeklySeconds > 0) {
+                                                weeklyTime = formatDuration(tt.weeklySeconds);
+                                            }
+                                            if (tt.lastMonthReset === currentMonth && tt.monthlySeconds > 0) {
+                                                monthlyTime = formatDuration(tt.monthlySeconds);
+                                            }
+                                        }
+
+                                        sendMessage(`📊 ${name} | Weekly: ${weeklyTime} | Monthly: ${monthlyTime}`);
+
+                                    } catch (error) {
+                                        console.error('Error in /member command:', error);
+                                        sendMessage('❌ Error loading member data.');
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/spam")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const spam_word = String(message).split(" ")[1];
+                                    botConfig.spamWords.push(spam_word);
+                                    sendMessage(`Added!`);
+                                    addSpamWord(spam_word);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/seen") && isCommandEnabled(String(message))) {
+                                try {
+                                    const player_id = String(message).replace(/^\/seen\s*/, '').trim().toUpperCase();
+
+                                    if (!player_id) {
+                                        sendMessage("Usage: /seen [PLAYER_ID]");
+                                        return;
+                                    }
+
+                                    if (!savedData[player_id]) {
+                                        sendMessage(`❌ No data found for player ID: ${player_id}`);
+                                        return;
+                                    }
+
+                                    const userData = savedData[player_id];
+                                    const userName = userData.NM;
+                                    const lastSeen = userData.lastSeen;
+
+                                    if (!lastSeen) {
+                                        sendMessage(`👤 ${userName} [${player_id}] - No last seen data available`);
+                                        return;
+                                    }
+
+                                    const lastSeenDate = new Date(lastSeen);
+                                    const now = new Date();
+                                    const diffMs = now - lastSeenDate;
+                                    const diffSeconds = Math.floor(diffMs / 1000);
+                                    const diffMinutes = Math.floor(diffSeconds / 60);
+                                    const diffHours = Math.floor(diffMinutes / 60);
+                                    const diffDays = Math.floor(diffHours / 24);
+
+                                    let timeAgo;
+                                    if (diffSeconds < 60) {
+                                        timeAgo = `${diffSeconds} second${diffSeconds !== 1 ? 's' : ''} ago`;
+                                    } else if (diffMinutes < 60) {
+                                        timeAgo = `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
+                                    } else if (diffHours < 24) {
+                                        timeAgo = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+                                    } else {
+                                        timeAgo = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+                                    }
+
+                                    const formattedDate = lastSeenDate.toLocaleString('en-PK', {
+                                        timeZone: 'Asia/Karachi',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                    });
+
+                                    sendMessage(`${timeAgo} (📅 ${formattedDate}) [👤 ${userName}]`);
+
+                                } catch (err) {
+                                    console.error('Error in /seen command:', err);
+                                    sendMessage("❌ Error retrieving user data");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/whois") && isCommandEnabled(String(message))) {
+                                const player_id = String(message).replace(/^\/whois\s*/, '');
+                                const names = getNames(player_id.toUpperCase());
+                                sendMessage(names);
+                            }
+
+                            else if (String(message).startsWith("/reset")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        sendMessage("Sending reset request to dashboard...");
+                                        const response = await axios.get(`${DASHBOARD_URL}/reset`, { timeout: 10000 });
+                                        if (response.data?.success) {
+                                            sendMessage("Dashboard reset successful!");
+                                        } else {
+                                            sendMessage(`Reset response: ${response.data?.message || 'Unknown'}`);
+                                        }
+                                    } catch (error) {
+                                        logger.error('Reset command error:', error.message);
+                                        sendMessage(`Reset failed: ${error.message}`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/ulm")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    const [command, mic] = String(message).split(" ");
+
+                                    if (!botConfig.admins.includes(user_id)) {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                        return;
+                                    }
+
+                                    if (String(mic).toLowerCase() === "all") {
+                                        const maxMic = botConfig.settings?.micCount || 10;
+                                        for (let i = 1; i <= maxMic; i++) {
+                                            unlockMic(i);
+                                        }
+                                        sendMessage(`All microphones (1-${maxMic}) have been unlocked.`);
+                                    } else {
+                                        const micNumber = Number(mic);
+
+                                        const maxMic = botConfig.settings?.micCount || 10;
+                                        if (isNaN(micNumber) || micNumber < 1 || micNumber > maxMic) {
+                                            sendMessage(`Invalid microphone number. Please specify 1-${maxMic} or "all".`);
+                                        } else {
+                                            unlockMic(micNumber);
+                                            sendMessage(`Microphone ${micNumber} has been unlocked.`);
+                                        }
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/ulm [mic_number]' or '/ulm all'");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/cn")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    exitclub();
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    changeName(String(message).replace(/^\/cn\s*/, ''));
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    joinClub(`${club_code}`);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/say")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    sendMessage(String(message).replace(/^\/say\s*/, ''));
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Stream control: /play [song_index | youtube_url]
+                            else if (String(message).startsWith("/play") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        // Check if bot is on mic, if not join first
+                                        if (!onMic) {
+                                            joinAdminMic(1);
+                                            // Wait for mic confirmation (up to 3 seconds)
+                                            let waited = 0;
+                                            while (!onMic && waited < 3000) {
+                                                await new Promise(resolve => setTimeout(resolve, 200));
+                                                waited += 200;
+                                            }
+                                            if (!onMic) {
+                                                sendMessage(`❌ I am not on mic currently.`);
+                                                return;
+                                            }
+                                        }
+                                        
+                                        const args = String(message).replace(/^\/play\s*/, '').trim();
+                                        
+                                        // Check if argument is a YouTube URL
+                                        if (args && isYouTubeUrl(args)) {
+                                            sendMessage(`📥 Downloading from YouTube... Please wait.`);
+                                            logger.info(`🎵 Admin ${user_id} triggered /play with YouTube URL: ${args}`);
+                                            
+                                            try {
+                                                const result = await downloadYouTubeAsMP3(args);
+                                                
+                                                // Set the stream to play the newly downloaded song
+                                                streamState.currentSongIndex = result.index;
+                                                streamState.status = 'playing';
+                                                streamState.timestamp = Date.now();
+                                                
+                                                // Broadcast to SSE + WebSocket clients
+                                                broadcastStreamEvent({ 
+                                                    action: 'play', 
+                                                    songIndex: streamState.currentSongIndex,
+                                                    timestamp: streamState.timestamp 
+                                                });
+                                                
+                                                sendMessage(`✅ Downloaded: ${result.title}\n▶️ Now playing song #${streamState.currentSongIndex + 1}`);
+                                            } catch (downloadErr) {
+                                                sendMessage(`❌ Download failed: ${downloadErr.message}`);
+                                                logger.error(`YouTube download error: ${downloadErr.message}`);
+                                            }
+                                        } else {
+                                            // Regular play command with optional song index
+                                            const songIndex = args ? parseInt(args) : undefined;
+                                            
+                                            if (songIndex !== undefined && !isNaN(songIndex)) {
+                                                streamState.currentSongIndex = songIndex;
+                                            }
+                                            streamState.status = 'playing';
+                                            streamState.timestamp = Date.now();
+                                            
+                                            // Broadcast to SSE + WebSocket clients
+                                            broadcastStreamEvent({ 
+                                                action: 'play', 
+                                                songIndex: streamState.currentSongIndex,
+                                                timestamp: streamState.timestamp 
+                                            });
+                                            
+                                            sendMessage(`▶️ Stream: Playing song #${streamState.currentSongIndex + 1}`);
+                                            logger.info(`🎵 Admin ${user_id} triggered /play`);
+                                        }
+                                    } catch (err) {
+                                        sendMessage("Error processing play command.");
+                                        logger.error(`/play error: ${err.message}`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Stream control: /pause
+                            else if (String(message).startsWith("/pause") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        streamState.status = 'paused';
+                                        streamState.timestamp = Date.now();
+                                        
+                                        broadcastStreamEvent({ 
+                                            action: 'pause',
+                                            timestamp: streamState.timestamp 
+                                        });
+                                        
+                                        sendMessage(`⏸️ Stream: Paused`);
+                                        logger.info(`⏸️ Admin ${user_id} triggered /pause`);
+                                    } catch (err) {
+                                        sendMessage("Error processing pause command.");
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // YouTube song: /song <song_name>
+                            else if (String(message).startsWith("/song") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        // Check if bot is on mic, if not join first
+                                        if (!onMic) {
+                                            joinAdminMic(1);
+                                            let waited = 0;
+                                            while (!onMic && waited < 3000) {
+                                                await new Promise(resolve => setTimeout(resolve, 200));
+                                                waited += 200;
+                                            }
+                                            if (!onMic) {
+                                                sendMessage(`❌ I am not on mic currently.`);
+                                                return;
+                                            }
+                                        }
+                                        
+                                        const songName = String(message).replace(/^\/song\s*/, '').trim();
+                                        
+                                        if (!songName) {
+                                            sendMessage(`❌ Usage: /song <song name>`);
+                                            return;
+                                        }
+                                        
+                                        sendMessage(`🔍 Searching: ${songName}...`);
+                                        logger.info(`🎵 Admin ${user_id} triggered /song: ${songName}`);
+                                        
+                                        // Use yt-dlp to get audio URL (spawn with array args to prevent command injection)
+                                        const { spawn } = require('child_process');
+                                        const ytArgs = [
+                                            '--cookies', 'cookies.txt',
+                                            '--js-runtimes', 'node',
+                                            '-f', 'bestaudio',
+                                            '-g',
+                                            `ytsearch:${songName}`
+                                        ];
+                                        
+                                        const ytProcess = spawn('/root/.local/bin/yt-dlp', ytArgs, { timeout: 30000 });
+                                        let stdout = '';
+                                        let stderr = '';
+                                        
+                                        ytProcess.stdout.on('data', (data) => {
+                                            stdout += data.toString();
+                                        });
+                                        
+                                        ytProcess.stderr.on('data', (data) => {
+                                            stderr += data.toString();
+                                        });
+                                        
+                                        ytProcess.on('error', (error) => {
+                                            sendMessage(`❌ Failed to run yt-dlp: ${error.message}`);
+                                            logger.error(`yt-dlp spawn error: ${error.message}`);
+                                        });
+                                        
+                                        ytProcess.on('close', (code) => {
+                                            if (code !== 0) {
+                                                sendMessage(`❌ Failed to find song`);
+                                                logger.error(`yt-dlp exited with code ${code}: ${stderr}`);
+                                                return;
+                                            }
+                                            
+                                            const audioUrl = stdout.trim();
+                                            if (!audioUrl) {
+                                                sendMessage(`❌ No results found for: ${songName}`);
+                                                return;
+                                            }
+                                            
+                                            const proxyPath = `/api/jack/youtube-proxy?url=${encodeURIComponent(audioUrl)}`;
+                                            
+                                            broadcastStreamEvent({ 
+                                                action: 'youtube', 
+                                                url: proxyPath,
+                                                songName: songName,
+                                                timestamp: Date.now()
+                                            });
+                                            
+                                            streamState.status = 'playing';
+                                            streamState.timestamp = Date.now();
+                                            
+                                            sendMessage(`▶️ Now playing: ${songName}`);
+                                            logger.info(`🎵 Playing YouTube audio: ${songName}`);
+                                        });
+                                    } catch (err) {
+                                        sendMessage("Error processing song command.");
+                                        logger.error(`/song error: ${err.message}`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Stream control: /next
+                            else if (String(message).startsWith("/next") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        // If a dedication is currently playing, skip it
+                                        if (currentDedication) {
+                                            clearDedicationInterval();
+                                            currentDedication = null;
+                                            broadcastStreamEvent({ action: 'stop', timestamp: Date.now() });
+                                            
+                                            if (dedicationQueue.length > 0) {
+                                                sendMessage(`⏭️ Skipping dedication, playing next...`);
+                                                setTimeout(() => playNextDedication(), 500);
+                                            } else {
+                                                sendMessage(`⏭️ Dedication skipped. Queue is empty.`);
+                                            }
+                                            logger.info(`⏭️ Admin ${user_id} skipped dedication`);
+                                            return;
+                                        }
+                                        
+                                        // Normal playlist next
+                                        let songs = [];
+                                        try {
+                                            const data = await fs.readFile(SONGS_METADATA_FILE, 'utf8');
+                                            const parsed = JSON.parse(data);
+                                            songs = Array.isArray(parsed) ? parsed : (parsed.songs || []);
+                                        } catch (err) {}
+                                        
+                                        const totalSongs = songs.length;
+                                        if (totalSongs === 0) {
+                                            sendMessage(`❌ No songs available in playlist.`);
+                                            return;
+                                        }
+                                        
+                                        streamState.currentSongIndex = (streamState.currentSongIndex + 1) % totalSongs;
+                                        streamState.status = 'playing';
+                                        streamState.timestamp = Date.now();
+                                        
+                                        broadcastStreamEvent({ 
+                                            action: 'next', 
+                                            songIndex: streamState.currentSongIndex,
+                                            timestamp: streamState.timestamp 
+                                        });
+                                        
+                                        sendMessage(`⏭️ Stream: Next song #${streamState.currentSongIndex + 1}`);
+                                        logger.info(`⏭️ Admin ${user_id} triggered /next`);
+                                    } catch (err) {
+                                        sendMessage("Error processing next command.");
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Stream control: /stop
+                            else if (String(message).startsWith("/stop") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        streamState.status = 'stopped';
+                                        streamState.timestamp = Date.now();
+                                        
+                                        broadcastStreamEvent({ 
+                                            action: 'stop',
+                                            timestamp: streamState.timestamp 
+                                        });
+                                        
+                                        sendMessage(`⏹️ Stream: Stopped`);
+                                        logger.info(`⏹️ Admin ${user_id} triggered /stop`);
+                                    } catch (err) {
+                                        sendMessage("Error processing stop command.");
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Stream control: /rec (reconnect Agora with new credentials)
+                            else if (String(message).startsWith("/rec") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        // Use in-memory agoraCredentials (updated by CJA/REA messages)
+                                        if (!agoraCredentials.channel || !agoraCredentials.token) {
+                                            sendMessage(`❌ Agora credentials not available. Rejoin the club first.`);
+                                            return;
+                                        }
+                                        
+                                        streamState.currentSongIndex = 0;
+                                        streamState.status = 'playing';
+                                        streamState.timestamp = Date.now();
+                                        
+                                        broadcastStreamEvent({ 
+                                            action: 'reconnect',
+                                            agoraChannel: agoraCredentials.channel,
+                                            agoraToken: agoraCredentials.token,
+                                            songIndex: 0,
+                                            timestamp: streamState.timestamp 
+                                        });
+                                        
+                                        sendMessage(`🔄 Stream: Reconnecting with new credentials...`);
+                                        logger.info(`🔄 Admin ${user_id} triggered /rec - Agora reconnect`);
+                                    } catch (err) {
+                                        sendMessage("Error processing reconnect command.");
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            // Voice AI control: /talk [on|off|message]
+                            else if (String(message).startsWith("/talk") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    try {
+                                        const talkArg = String(message).replace(/^\/talk\s*/, '').trim().toLowerCase();
+                                        
+                                        if (!talkArg || talkArg === 'on') {
+                                            if (!onMic) {
+                                                joinAdminMic(1);
+                                                let waited = 0;
+                                                while (!onMic && waited < 3000) {
+                                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                                    waited += 200;
+                                                }
+                                                if (!onMic) {
+                                                    sendMessage(`❌ I am not on mic currently.`);
+                                                    return;
+                                                }
+                                            }
+                                            
+                                            broadcastStreamEvent({ 
+                                                action: 'talk', 
+                                                enable: true,
+                                                timestamp: Date.now()
+                                            });
+                                            
+                                            streamState.status = 'talking';
+                                            streamState.timestamp = Date.now();
+                                            
+                                            const currentBotName = botConfig.botConfiguration?.botName || 'Bot';
+                                            sendMessage(`🎙️ Voice AI mode activated! Say "${currentBotName}" to talk to me.`);
+                                            logger.info(`🎙️ Admin ${user_id} enabled /talk mode`);
+                                        } else if (talkArg === 'off') {
+                                            broadcastStreamEvent({ 
+                                                action: 'talk', 
+                                                enable: false,
+                                                timestamp: Date.now()
+                                            });
+                                            
+                                            streamState.status = 'idle';
+                                            streamState.timestamp = Date.now();
+                                            
+                                            sendMessage(`🔇 Voice AI mode deactivated. Music is available again.`);
+                                            logger.info(`🔇 Admin ${user_id} disabled /talk mode`);
+                                        } else {
+                                            broadcastStreamEvent({ 
+                                                action: 'talk', 
+                                                enable: true,
+                                                message: String(message).replace(/^\/talk\s*/, '').trim(),
+                                                timestamp: Date.now()
+                                            });
+                                            
+                                            streamState.status = 'talking';
+                                            streamState.timestamp = Date.now();
+                                            
+                                            sendMessage(`🗣️ Sending message to voice AI...`);
+                                            logger.info(`🗣️ Admin ${user_id} sent /talk message`);
+                                        }
+                                    } catch (err) {
+                                        sendMessage("Error processing talk command.");
+                                        logger.error(`/talk error: ${err.message}`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/refresh")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    refresh();
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/cq")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const clearedCount = messageQueue.clearQueue();
+                                    sendMessage(`Queue cleared. Removed ${clearedCount} pending messages.`);
+                                    logger.info(`🗑️ Admin ${user_id} cleared queue - ${clearedCount} messages removed`);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/ma")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const u_id = String(message).replace(/^\/ma\s*/, '');
+                                    makeAdmin(u_id);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/rma")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const u_id = String(message).replace(/^\/rma\s*/, '');
+                                    removeAdmin(u_id);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/iv")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    if (botConfig.admins.includes(user_id)) {
+                                        if (allowInvites) {
+                                            const usage = await loadIcicUsage();
+
+                                            if (usage.lastUsed && isToday(usage.lastUsed)) {
+                                                const timeRemaining = getTimeUntilMidnight();
+                                                const lastUser = usage.usedBy ? getName(usage.usedBy) : 'Unknown';
+
+                                                sendMessage(`⏰ /iv has already been used today by ${lastUser}.`);
+                                                setTimeout(() => {
+                                                    sendMessage(`Try again in ${timeRemaining}.`);
+                                                }, 100);
+
+                                                logger.info(`/iv command blocked - already used today by ${usage.usedBy}`);
+                                            } else {
+                                                const updated = await updateIcicUsage(user_id);
+
+                                                if (updated) {
+                                                    clubInvite();
+                                                    sendMessage(`✅ Club invites sent! (Daily limit: 1/1 used)`);
+                                                    logger.info(`/iv command executed by ${user_id} - daily usage recorded`);
+                                                } else {
+                                                    sendMessage(`❌ Failed to update usage tracking. Try again.`);
+                                                }
+                                            }
+                                        } else {
+                                            sendMessage(`You cannot use this command currently.`);
+                                        }
+                                    } else {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                    }
+                                } catch (err) {
+                                    logger.error('Error in /iv command:', err);
+                                    sendMessage("Error processing command. Please try again.");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/imem")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                try {
+                                    if (botConfig.admins.includes(user_id)) {
+                                        if (allowInvites) {
+                                            memberInvite();
+                                        } else {
+                                            sendMessage(`You cannot use this command currently.`);
+                                        }
+                                    } else {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/lm [mic_number]'");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/rejoin")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    exitclub();
+                                    joinClub(club_code);
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/ub") && isCommandEnabled(String(message))) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    const args = String(message).trim().split(/\s+/);
+
+                                    if (args[1] === "all") {
+                                        for (const userId of bannedUserIds) {
+                                            unbanUser(userId);
+                                            await sleep(100);
+                                        }
+                                    } else if (args[1] === "check") {
+                                        checkBannedUsers();
+                                        check_ban_list = true;
+                                    } else if (args[1]) {
+                                        const player_id = String(message).replace(/^\/ub\s*/, '');
+                                        unbanID(player_id.toUpperCase());
+                                    } else {
+                                        sendMessage(`Usage: /ub <userId> | /ub all | /ub check`);
+                                    }
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/joinMic")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+                                if (botConfig.admins.includes(user_id)) {
+                                    joinAdminMic();
+                                } else {
+                                    sendMessage(`You are not eligible to use this command.`);
+                                }
+                            }
+
+                            else if (String(message).startsWith("/lm")) {
+                                const user_id = findPlayerID(jsonMessage.PY.UID);
+
+                                try {
+                                    const [command, mic] = String(message).split(" ");
+
+                                    if (!botConfig.admins.includes(user_id)) {
+                                        sendMessage(`You are not eligible to use this command.`);
+                                        return;
+                                    }
+
+                                    if (String(mic).toLowerCase() === "all") {
+                                        const maxMic = botConfig.settings?.micCount || 10;
+                                        for (let i = 1; i <= maxMic; i++) {
+                                            lockMic(i);
+                                        }
+                                        sendMessage(`All microphones (1-${maxMic}) have been locked.`);
+                                    } else {
+                                        const micNumber = Number(mic);
+
+                                        const maxMic = botConfig.settings?.micCount || 10;
+                                        if (isNaN(micNumber) || micNumber < 1 || micNumber > maxMic) {
+                                            sendMessage(`Invalid microphone number. Please specify 1-${maxMic} or "all".`);
+                                        } else {
+                                            lockMic(micNumber);
+                                            sendMessage(`Microphone ${micNumber} has been locked.`);
+                                        }
+                                    }
+                                } catch (err) {
+                                    sendMessage("Please use the command in format '/lm [mic_number]' or '/lm all'");
+                                }
+                            }
+
+                            else if (String(message).startsWith("/secret ") && isCommandEnabled(String(message))) {
+                                try {
+                                    const parts = String(message).substring(8).trim();
+                                    const spaceIdx = parts.indexOf(' ');
+                                    
+                                    if (spaceIdx === -1) {
+                                        sendMessage("Usage: /secret [PlayerID] [your message]");
+                                        return;
+                                    }
+                                    
+                                    const targetGC = parts.substring(0, spaceIdx).trim();
+                                    const secretMsg = parts.substring(spaceIdx + 1).trim();
+                                    
+                                    if (!targetGC || !secretMsg) {
+                                        sendMessage("Usage: /secret [PlayerID] [your message]");
+                                        return;
+                                    }
+                                    
+                                    if (secretMsg.length > 500) {
+                                        sendMessage("Message too long. Max 500 characters.");
+                                        return;
+                                    }
+                                    
+                                    const senderUID = jsonMessage.PY.UID;
+                                    const senderGC = findPlayerID(senderUID);
+                                    const senderName = getName(senderGC) || senderGC || 'Unknown';
+                                    
+                                    const messages = await loadSecretMessages();
+                                    messages.push({
+                                        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+                                        targetGC: targetGC,
+                                        message: secretMsg,
+                                        senderGC: senderGC || 'Unknown',
+                                        senderName: senderName,
+                                        senderUID: senderUID,
+                                        status: 'pending',
+                                        createdAt: new Date().toISOString(),
+                                        deliveredAt: null
+                                    });
+                                    await saveSecretMessages(messages);
+                                    
+                                    deleteMsg(jsonMessage.PY.MID);
+                                    sendMessage(`Your secret message has been saved and will be delivered when ${targetGC} enters the club.`);
+                                    logger.info(`📨 Secret message stored from ${senderGC} to ${targetGC}`);
+                                } catch (err) {
+                                    logger.error(`Secret message error: ${err.message}`);
+                                    sendMessage("Error saving secret message. Try again.");
+                                }
+                            }
+
+                            else if (String(message).trim() === "/read" && isCommandEnabled("/read")) {
+                                try {
+                                    const senderUID = jsonMessage.PY.UID;
+                                    const gc = findPlayerID(senderUID);
+                                    
+                                    if (!gc) {
+                                        sendMessage("Could not identify your player ID.");
+                                        return;
+                                    }
+                                    
+                                    const messages = await loadSecretMessages();
+                                    const pending = messages.filter(m => m.targetGC === gc && m.status === 'pending');
+                                    
+                                    if (pending.length === 0) {
+                                        sendMessage(`${getName(gc)} you have no secret messages.`);
+                                        return;
+                                    }
+                                    
+                                    for (const msg of pending) {
+                                        sendMessage(`📩 Secret message: "${msg.message}"`);
+                                        msg.status = 'delivered';
+                                        msg.deliveredAt = new Date().toISOString();
+                                    }
+                                    await saveSecretMessages(messages);
+                                    
+                                    deleteMsg(jsonMessage.PY.MID);
+                                    logger.info(`📨 ${gc} read ${pending.length} secret message(s)`);
+                                } catch (err) {
+                                    logger.error(`/read error: ${err.message}`);
+                                    sendMessage("Error reading secret messages. Try again.");
+                                }
+                            }
+
+                            else if (botConfig.spamWords.some(word => String(message).toLowerCase().includes(word))) {
+                                const matchedWord = botConfig.spamWords.find(word => String(message).toLowerCase().includes(word));
+                                const punishmentType = botConfig.settings?.punishments?.spamWords || 'ban';
+                                applyPunishment(UID, 'spamWords');
+                                deleteMsg(jsonMessage.PY.MID);
+                                if (punishmentType === 'kick') {
+                                    logSpamKick(UID, String(message), matchedWord, 'kick');
+                                }
+                                botState.stats.spamBlocked++;
+                            }
+                        }
+
+                        else if (jsonMessage.PY && jsonMessage.PY.TY) {
+                            const micIndex = Number(jsonMessage.PY.IN);
+                            const newUID = jsonMessage.PY.UID;
+
+                            if (micIndex >= 0) {
+                                for (let i = 0; i < mics.length; i++) {
+                                    if (mics[i] === newUID) {
+                                        mics[i] = null;
+                                    }
+                                }
+                                mics[micIndex] = newUID;
+                            }
+                        }
+
+                        else if (jsonMessage.PY && !jsonMessage.PY.TY) {
+                            const micIndex = Number(jsonMessage.PY.IN);
+                            mics[micIndex] = null;
+                        }
+                    }
+                } catch (err) {
+                    console.log(err);
+                }
+            });
+
+            ws.on('error', async (err) => {
+                console.error(`❌ WebSocket error (socket #${thisSocketId}):`, err.message);
+                await logSocketStatus('error', err.message);
+            });
+
+            ws.on('close', async (code, reason) => {
+                console.log(`Socket #${thisSocketId} closed at ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' })} - Code: ${code}, Reason: ${reason}`);
+                await logSocketStatus('disconnected', reason ? reason.toString() : 'Socket closed normally');
+
+                ws.removeAllListeners();
+
+                if (thisSocketId !== currentSocketId) {
+                    logger.info(`🚫 Stale socket #${thisSocketId} closed (current is #${currentSocketId}), ignoring`);
+                    return;
+                }
+
+                botState.connected = false;
+                botState.ws = null;
+                authRequired = false;
+                authMessage = null;
+
+                if (wsIntervals.length > 0) {
+                    logger.info(`🧹 Clearing ${wsIntervals.length} WebSocket intervals on disconnect`);
+                    wsIntervals.forEach(interval => clearInterval(interval));
+                    wsIntervals = [];
+                }
+
+                if (intentionalDisconnect) {
+                    logger.info('🛑 Intentional disconnect - skipping auto-reconnect');
+                    intentionalDisconnect = false;
+                    isReconnecting = false;
+                    return;
+                }
+
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+
+                logger.info('🔄 Attempting to reconnect in 5 seconds...');
+                reconnectTimer = setTimeout(async () => {
+                    reconnectTimer = null;
+                    try {
+                        logger.info('🔌 Reconnecting WebSocket...');
+                        await connectWebSocket();
+                        logger.info('✅ WebSocket reconnected successfully');
+                    } catch (err) {
+                        logger.error('❌ Failed to reconnect WebSocket:', err.message);
+                    }
+                }, 5000);
+            });
+
+            // Bot functions
+            async function sendMessage(tempMsg) {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "CM",
+                    PY: JSON.stringify({
+                        CID: `${club_code}`,
+                        MG: `${tempMsg}`
+                    }),
+                    SQ: null,
+                    EN: false
+                }), true); // skipDelay=true for instant chat messages
+            }
+
+            function refresh() {
+                if (inClub) {
+                    sendWebSocketMessage(JSON.stringify({
+                        RH: "CBC",
+                        PU: "RE",
+                        PY: JSON.stringify({ CID: `${club_code}` })
+                    }));
+                    messageQueue.resetSequence();
+                }
+            }
+
+            function inviteMic(UID) {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "SMI",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        UID: `${UID}`
+                    })
+                }));
+            }
+
+            function lockMic(num) {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "TMS",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        LS: true,
+                        LM: true,
+                        MN: num
+                    })
+                }));
+            }
+
+            function unlockMic(num) {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "TMS",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        LS: false,
+                        LM: true,
+                        MN: num
+                    })
+                }));
+            }
+
+            async function clubInvite() {
+                const people = await loadPlayers();
+                const invitePromises = people.map(user =>
+                    sendWebSocketMessageAsync(JSON.stringify({
+                        RH: "CBC",
+                        PU: "IV",
+                        PY: JSON.stringify({
+                            CI: `${club_code}`,
+                            AP: true,
+                            CN: `${club_name}`,
+                            snuid: `${user}`
+                        })
+                    })).catch(error => {
+                        console.error(`Failed to invite user ${user}:`, error);
+                    })
+                );
+
+                Promise.allSettled(invitePromises).then(results => {
+                    logger.info('All invites processed:', results);
+                });
+            }
+
+            async function memberInvite() {
+                try {
+                    const filePath = path.join(__dirname, MEMBERS_FILE);
+                    const fileContent = await fs.readFile(filePath, 'utf8');
+                    const club_members = JSON.parse(fileContent);
+
+                    const invitePromises = club_members.map(user =>
+                        sendWebSocketMessageAsync(JSON.stringify({
+                            RH: "CBC",
+                            PU: "IV",
+                            PY: JSON.stringify({
+                                CI: `${club_code}`,
+                                AP: true,
+                                CN: `${club_name}`,
+                                snuid: `${user.SNUID}`
+                            })
+                        })).catch(error => {
+                            console.error(`Failed to invite user ${user.SNUID}:`, error);
+                        })
+                    );
+
+                    const results = await Promise.allSettled(invitePromises);
+                    logger.info('All invites processed:', results);
+
+                    return results;
+                } catch (error) {
+                    logger.error('Error in memberInvite:', error);
+                    throw error;
+                }
+            }
+
+            function checkLevel(UID) {
+                if (!pendingLevelChecks.includes(UID)) {
+                    pendingLevelChecks.push(UID);
+                    logger.info(`➕ Added UID to level check queue: ${UID}`);
+                }
+            }
+
+            function banUser(UID) {
+                // Skip if already attempted 3+ times
+                if (banAttempts[UID] && banAttempts[UID] >= 3) {
+                    logger.info(`⏭️ Skipping ban queue for UID ${UID} - already attempted ${banAttempts[UID]} times`);
+                    return;
+                }
+                if (!clubAdmins.includes(String(UID)) && !pendingBans.includes(UID)) {
+                    pendingBans.push(UID);
+                    logger.info(`➕ Added UID to ban queue: ${UID}`);
+                }
+            }
+
+            function removeMember(uid) {
+                const message = JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "CME",
+                    "PY": JSON.stringify({
+                        "CID": `${club_code}`,
+                        "UID": `${uid}`
+                    })
+                });
+
+                sendWebSocketMessage(message);
+            }
+
+            function fetchClubMembers() {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "GML",
+                    PY: JSON.stringify({
+                        "CNT": 800,
+                        "CID": `${club_code}`,
+                        "PN": 1
+                    })
+                }));
+            }
+
+            function applyPunishment(UID, violationType) {
+                const punishmentType = botConfig.settings?.punishments?.[violationType] || 'ban';
+
+                if (punishmentType === 'kick') {
+                    kickUser(UID);
+                    logger.info(`👢 Kicking user ${UID} for: ${violationType}`);
+                } else {
+                    banUser(UID);
+                    logger.info(`🔨 Banning user ${UID} for: ${violationType}`);
+                }
+            }
+
+            function unbanID(GC) {
+                if (!savedData[GC]) {
+                    return `No data found for GC: ${GC}`;
+                }
+                unbanUser(savedData[GC].UID);
+            }
+
+            function unbanUser(UID) {
+                if (!clubAdmins.includes(String(UID)) && !pendingUnbans.includes(UID)) {
+                    pendingUnbans.push(UID);
+                    logger.info(`➕ Added UID to unban queue: ${UID}`);
+                }
+            }
+
+            function kickUser(UID) {
+                if (!clubAdmins.includes(String(UID)) && !pendingKicks.includes(UID)) {
+                    pendingKicks.push(UID);
+                    logger.info(`➕ Added UID to kick queue: ${UID}`);
+                }
+            }
+
+            function deleteMsg(MID) {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "DCM",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        MID: MID,
+                        MTXT: "."
+                    })
+                }));
+            }
+
+            function joinMic() {
+                const join_mic = JSON.stringify({
+                    RH: "CBC",
+                    PU: "TMS",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        TM: true,
+                        RS: true
+                    })
+                });
+                sendWebSocketMessageAsync(join_mic);
+                // onMic will be set to true when TMS confirmation is received
+            }
+
+            function joinAdminMic(mic = 1) {
+                const join_mic = JSON.stringify({
+                    RH: "CBC",
+                    PU: "TMS",
+                    SQ: null,
+                    PY: JSON.stringify({
+                        MN: mic,
+                        TM: true
+                    })
+                });
+                sendWebSocketMessage(join_mic);
+                // onMic will be set to true when TMS confirmation is received
+            }
+
+            function checkBannedUsers() {
+                const fetchBanList = JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "GBU",
+                    "SQ": null,
+                    "PY": JSON.stringify({
+                        "CID": `${club_code}`,
+                        "UID": `${my_uid}`
+                    })
+                });
+                sendWebSocketMessage(fetchBanList);
+            }
+
+            function findUserToken(PID) {
+                const target = String(PID).toUpperCase();
+                for (const GC in savedData) {
+                    if (String(GC) === target) {
+                        return savedData[GC].UID;
+                    }
+                }
+            }
+
+            function removeAdmin(uid) {
+                const user = findUserToken(uid);
+                sendWebSocketMessage(JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "MAD",
+                    "PY": JSON.stringify({
+                        "RT": 0,
+                        "UID": `${user}`
+                    })
+                }));
+            }
+
+            function makeAdmin(uid) {
+                const user = findUserToken(uid);
+                sendWebSocketMessage(JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "MAD",
+                    "SQ": null,
+                    "PY": JSON.stringify({
+                        "RT": 1,
+                        "UID": `${user}`
+                    })
+                }));
+            }
+
+            function joinClub(code) {
+                sendWebSocketMessage(JSON.stringify({
+                    "RH": "CBC",
+                    "PU": "CJ",
+                    "PY": JSON.stringify({
+                        "IDX": "2",
+                        "CID": `${code}`,
+                        "PI": {
+                            "GA": false,
+                            "NM": "␞Eʟɪᴊᴀʜ Rᴇx✯",
+                            "XP": 0,
+                            "AD": "15",
+                            "ABI": "",
+                            "CV": 282,
+                            "WS": 0,
+                            "PT": 3,
+                            "LV": 1,
+                            "snuid": "",
+                            "GC": "RALA7327",
+                            "PBI": "",
+                            "VT": 0,
+                            "TID": 0,
+                            "SEI": {},
+                            "UI": "059e8cac2d33fbe79f03d0512d1cac6fd31ebcadb9ccab245409a7e538f61ae8d2881e06f48fe0de",
+                            "AF": "",
+                            "LVT": 0,
+                            "AV": "122097423098939491",
+                            "CLR": [],
+                            "SLBR": 0,
+                            "LLC": "PK"
+                        },
+                        "JTY": "16",
+                        "CF": 0
+                    })
+                }));
+                messageQueue.resetSequence();
+
+                onMic = false;
+                inClub = true;
+                setTimeout(() => {
+                    fetchClubMembers();
+                }, 500);
+            }
+
+            function changeName(name) {
+                const changeName = `{"RH":"us","PU":"EP","PY":"{\\"UN\\":\\"${name}\\"}"}`;
+                sendWebSocketMessage(changeName);
+            }
+
+            function exitclub() {
+                sendWebSocketMessage(JSON.stringify({
+                    RH: "CBC",
+                    PU: "LC",
+                    PY: JSON.stringify({
+                        IDX: `${index_idx - 1}`,
+                        TY: 0
+                    })
+                }));
+                inClub = false;
+            }
+
+            async function sendWebSocketMessageAsync(message, skipDelay = false) {
+                try {
+                    await messageQueue.enqueue(message, skipDelay);
+                } catch (error) {
+                    throw error;
+                }
+            }
+
+            function sendWebSocketMessage(message, skipDelay = false) {
+                return messageQueue.enqueue(message, skipDelay);
+            }
+
+        } catch (error) {
+            console.error('❌ WebSocket connection error:', error);
+            isReconnecting = false;
+            reject(error);
+        }
+    });
+}
+
+// Create HTTP server from Express app
+const server = http.createServer(app);
+
+// WebSocket server for dashboard stream control
+const dashboardWss = new WebSocket.Server({ server, path: '/ws/stream-control' });
+
+dashboardWss.on('connection', (ws, req) => {
+    // Optional: validate with query param secret
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const secret = url.searchParams.get('secret');
+    
+    if (secret && secret !== BOT_CONTROL_SECRET) {
+        logger.warn('⚠️ Dashboard WS connection rejected: invalid secret');
+        ws.close(4001, 'Invalid secret');
+        return;
+    }
+    
+    dashboardWSClients.add(ws);
+    logger.info(`📡 Dashboard WS connected (total: ${dashboardWSClients.size})`);
+    
+    // Send current state on connect
+    ws.send(JSON.stringify({ action: 'state', ...streamState }));
+    
+    ws.on('close', () => {
+        dashboardWSClients.delete(ws);
+        logger.info(`📡 Dashboard WS disconnected (total: ${dashboardWSClients.size})`);
+    });
+    
+    ws.on('error', (err) => {
+        logger.error(`Dashboard WS error: ${err.message}`);
+        dashboardWSClients.delete(ws);
+    });
+});
+
+// Initialize and start server
+(async () => {
+    // Initialize MySQL FIRST before starting HTTP server
+    await initializeMySQL();
+    
+    // Clean up expired sessions and log active session count
+    if (mysqlPool) {
+        await cleanupExpiredSessions();
+        try {
+            const [rows] = await mysqlPool.query('SELECT COUNT(*) as count FROM dashboard_sessions');
+            logger.info(`🔐 Active sessions in database: ${rows[0].count}`);
+        } catch (err) {
+            logger.error('Error counting sessions:', err.message);
+        }
+    }
+    
+    server.listen(PORT, async () => {
+        logger.info(`🚀 Bot ${botConfig.botConfiguration?.botName} API server running on port ${PORT}`);
+        logger.info(`📱 Dashboard available at http://localhost:${PORT}`);
+        logger.info(`📡 Dashboard WebSocket available at ws://localhost:${PORT}/ws/stream-control`);
+
+        await initializeBot();
+    });
+})();

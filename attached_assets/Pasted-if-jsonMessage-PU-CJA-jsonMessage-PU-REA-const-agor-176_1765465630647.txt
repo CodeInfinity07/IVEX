@@ -1,0 +1,45 @@
+if (jsonMessage?.PU === "CJA" || jsonMessage?.PU === "REA") {
+                            const agora_channel = jsonMessage.PY.VC.VCH;
+                            const agora_token = jsonMessage.PY.VC.AT;
+                            isProcessingBans = false;
+                            const ulData = jsonMessage?.PY?.OUL;
+                            const c_mics = jsonMessage.PY.MSI;
+                            club_name = jsonMessage?.PY?.NM;
+                            let m_index = 1;
+                            c_mics.forEach(mc => {
+                                if (mc.VCU === "" && mc.IL === false) {
+                                    lockMic(m_index);
+                                }
+                                m_index++;
+                            });
+
+                            if (jsonMessage?.PY?.SAL && typeof jsonMessage.PY.SAL === 'object') {
+                                clubAdmins = Object.keys(jsonMessage.PY.SAL);
+                            }
+
+                            if (jsonMessage?.PY?.AL && typeof jsonMessage.PY.AL === 'object') {
+                                clubAdmins.push(...Object.keys(jsonMessage.PY.AL));
+                            }
+
+                            if (ulData) {
+                                const users = Object.values(ulData);
+
+                                for (const user of users) {
+                                    if (String(user.UID) !== my_uid) {
+                                        const hasBannedPattern = botConfig.bannedPatterns.some(pattern =>
+                                            String(user.NM).includes(pattern)
+                                        );
+
+                                        if (hasBannedPattern) {
+                                            applyPunishment(user.UID, 'bannedPatterns');
+                                            botState.stats.usersKicked++;
+                                        } else {
+                                            checkLevel(user.UID);
+                                        }
+
+                                        // Add 500ms delay between each user
+                                        await sleep(500);
+                                    }
+                                }
+                            }
+                        }

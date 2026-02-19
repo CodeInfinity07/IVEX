@@ -1,0 +1,84 @@
+remote:     
+remote:     
+remote:       —— OpenAI API Key ————————————————————————————————————
+remote:        locations:
+remote:          - commit: ddd3302d30138bcd6ad0221ae26cecbbcfba8877
+remote:            path: attached_assets/Pasted-import-useState-useEffect-useRef-useCallback-from-react_1770995322167.txt:79
+remote:     
+remote:        (?) To push, remove secret from commit(s) or follow this URL to allow the secret.
+remote:        https://github.com/CodeInfinity07/rex-bot-2/security/secret-scanning/unblock-secret/39cYGyupIHsM11FGr5ez4ENrTpI
+remote:     
+remote: 
+remote: 
+To https://github.com/CodeInfinity07/rex-bot-2
+ ! [remote rejected] Wicked -> Wicked (push declined due to repository rule violations)
+error: failed to push some refs to 'https://github.com/CodeInfinity07/rex-bot-2'
+~/workspace$ git push
+Enumerating objects: 94, done.
+Counting objects: 100% (94/94), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (60/60), done.
+Writing objects: 100% (60/60), 29.48 KiB | 5.90 MiB/s, done.
+Total 60 (delta 50), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (50/50), completed with 17 local objects.
+remote: error: GH013: Repository rule violations found for refs/heads/Wicked.
+remote: 
+remote: - GITHUB PUSH PROTECTION
+remote:   —————————————————————————————————————————
+remote:     Resolve the following violations before pushing again
+remote: 
+remote:     - Push cannot contain secrets
+remote: 
+remote:     
+remote:      (?) Learn how to resolve a blocked push
+remote:      https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line#resolving-a-blocked-push
+remote:     
+remote:     
+remote:       —— OpenAI API Key ————————————————————————————————————
+remote:        locations:
+remote:          - commit: ddd3302d30138bcd6ad0221ae26cecbbcfba8877
+remote:            path: attached_assets/Pasted-import-useState-useEffect-useRef-useCallback-from-react_1770995322167.txt:79
+remote:     
+remote:        (?) To push, remove secret from commit(s) or follow this URL to allow the secret.
+remote:        https://github.com/CodeInfinity07/rex-bot-2/security/secret-scanning/unblock-secret/39cYGyupIHsM11FGr5ez4ENrTpI
+remote:     
+remote: 
+remote: 
+To https://github.com/CodeInfinity07/rex-bot-2
+ ! [remote rejected] Wicked -> Wicked (push declined due to repository rule violations)
+error: failed to push some refs to 'https://github.com/CodeInfinity07/rex-bot-2'
+~/workspace$ git push
+Enumerating objects: 94, done.
+Counting objects: 100% (94/94), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (60/60), done.
+Writing objects: 100% (60/60), 29.48 KiB | 4.21 MiB/s, done.
+Total 60 (delta 50), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (50/50), completed with 17 local objects.
+remote: error: GH013: Repository rule violations found for refs/heads/Wicked.
+remote: 
+remote: - GITHUB PUSH PROTECTION
+remote:   —————————————————————————————————————————
+remote:     Resolve the following violations before pushing again
+remote: 
+remote:     - Push cannot contain secrets
+remote: 
+remote:     
+remote:      (?) Learn how to resolve a blocked push
+remote:      https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line#resolving-a-blocked-push
+remote:     
+remote:     
+remote:       —— OpenAI API Key ————————————————————————————————————
+remote:        locations:
+remote:          - commit: ddd3302d30138bcd6ad0221ae26cecbbcfba8877
+remote:            path: attached_assets/Pasted-import-useState-useEffect-useRef-useCallback-from-react_1770995322167.txt:79
+remote:     
+remote:        (?) To push, remove secret from commit(s) or follow this URL to allow the secret.
+remote:        https://github.com/CodeInfinity07/rex-bot-2/security/secret-scanning/unblock-secret/39cYGyupIHsM11FGr5ez4ENrTpI
+remote:     
+remote: 
+remote: 
+To https://github.com/CodeInfinity07/rex-bot-2
+ ! [remote rejected] Wicked -> Wicked (push declined due to repository rule violations)
+error: failed to push some refs to 'https://github.com/CodeInfinity07/rex-bot-2'
+~/workspace$ 

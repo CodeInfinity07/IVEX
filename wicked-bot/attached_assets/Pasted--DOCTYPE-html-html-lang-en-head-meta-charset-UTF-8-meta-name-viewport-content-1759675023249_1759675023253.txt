@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RexSquad Bot Manager</title>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8f9fa;
+            overflow-x: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: 260px;
+            background: #1e293b;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 1.5rem;
+            background: #0f172a;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-header h4 {
+            color: #fff;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .sidebar-menu {
+            padding: 1rem 0;
+        }
+
+        .menu-item {
+            display: block;
+            padding: 0.875rem 1.5rem;
+            color: rgba(255,255,255,0.7);
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            cursor: pointer;
+        }
+
+        .menu-item:hover {
+            color: #fff;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .menu-item.active {
+            color: #fff;
+            background: rgba(59,130,246,0.1);
+            border-left-color: #3b82f6;
+        }
+
+        .menu-item i {
+            width: 20px;
+            margin-right: 0.75rem;
+        }
+
+        /* Main Content */
+        .main-wrapper {
+            margin-left: 260px;
+            min-height: 100vh;
+            transition: margin-left 0.3s ease;
+        }
+
+        .topbar {
+            background: #fff;
+            padding: 1rem 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #1e293b;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #dcfce7;
+            color: #166534;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .content {
+            padding: 2rem;
+        }
+
+        .page-section {
+            display: none;
+        }
+
+        .page-section.active {
+            display: block;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+            color: #fff;
+        }
+
+        .stat-icon.blue { background: #3b82f6; }
+        .stat-icon.green { background: #22c55e; }
+        .stat-icon.yellow { background: #eab308; }
+        .stat-icon.cyan { background: #06b6d4; }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1e293b;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: #64748b;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        /* Cards */
+        .card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .card-header h5 {
+            margin: 0;
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        /* Member List */
+        .member-list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+        }
+
+        .member-avatar {
+            width: 45px;
+            height: 45px;
+            background: #3b82f6;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            margin-right: 1rem;
+        }
+
+        .member-info h6 {
+            margin: 0 0 0.25rem 0;
+            font-size: 0.9375rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .badge-level {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-high { background: #dcfce7; color: #166534; }
+        .badge-medium { background: #fef3c7; color: #92400e; }
+        .badge-low { background: #f3f4f6; color: #4b5563; }
+
+        /* Logs */
+        .log-container {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            color: #e5e7eb;
+        }
+
+        .log-entry {
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            border-left: 3px solid;
+            border-radius: 4px;
+        }
+
+        .log-info { background: rgba(59,130,246,0.1); border-left-color: #3b82f6; }
+        .log-success { background: rgba(34,197,94,0.1); border-left-color: #22c55e; }
+        .log-warning { background: rgba(234,179,8,0.1); border-left-color: #eab308; }
+        .log-error { background: rgba(239,68,68,0.1); border-left-color: #ef4444; }
+        .log-jack { background: rgba(168,85,247,0.1); border-left-color: #a855f7; }
+
+        .log-time {
+            color: #9ca3af;
+            margin-right: 0.5rem;
+        }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.show {
+                transform: translateX(0);
+            }
+            
+            .main-wrapper {
+                margin-left: 0;
+            }
+            
+            .menu-toggle {
+                display: block;
+            }
+            
+            .content {
+                padding: 1rem;
+            }
+            
+            .sidebar-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                z-index: 999;
+                display: none;
+            }
+            
+            .sidebar-overlay.show {
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h4><i class="fa-solid fa-robot"></i> RexSquad Bot</h4>
+        </div>
+        <div class="sidebar-menu">
+            <a class="menu-item active" data-page="overview">
+                <i class="fa-solid fa-house"></i> Overview
+            </a>
+            <a class="menu-item" data-page="controls">
+                <i class="fa-solid fa-gamepad"></i> Bot Controls
+            </a>
+            <a class="menu-item" data-page="configuration">
+                <i class="fa-solid fa-gear"></i> Configuration
+            </a>
+            <a class="menu-item" data-page="settings">
+                <i class="fa-solid fa-sliders"></i> Settings
+            </a>
+            <a class="menu-item" data-page="members">
+                <i class="fa-solid fa-users"></i> Members
+            </a>
+            <a class="menu-item" data-page="protection">
+                <i class="fa-solid fa-shield-halved"></i> Protection
+            </a>
+            <a class="menu-item" data-page="logs">
+                <i class="fa-solid fa-terminal"></i> Activity Logs
+            </a>
+        </div>
+    </div>
+
+    <!-- Overlay for mobile -->
+    <div class="sidebar-overlay" id="overlay"></div>
+
+    <!-- Main Content -->
+    <div class="main-wrapper">
+        <!-- Top Bar -->
+        <div class="topbar">
+            <button class="menu-toggle" id="menuBtn">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span>Bot Running</span>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content">
+            <!-- Overview Page -->
+            <div class="page-section active" id="overview">
+                <h2 class="mb-4">Dashboard Overview</h2>
+                
+                <div class="row">
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Club Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-1">Club Name</small>
+                                    <div class="fw-bold fs-5">REX SQUAD</div>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block mb-1">Club Code</small>
+                                    <div class="fw-bold fs-5">3029915</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Bot Configuration</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-1">Bot Name</small>
+                                    <div class="fw-bold" id="dashBotName">Loki</div>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block mb-1">Bot Tone</small>
+                                    <div class="fw-bold text-capitalize" id="dashBotTone">upbeat</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Quick Actions</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="d-grid gap-2">
+                                    <button class="btn btn-primary" onclick="goToPage('members')">
+                                        <i class="fa-solid fa-users"></i> Manage Members
+                                    </button>
+                                    <button class="btn btn-success" onclick="goToPage('configuration')">
+                                        <i class="fa-solid fa-gear"></i> Bot Configuration
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Page -->
+            <div class="page-section" id="controls">
+                <h2 class="mb-4">Bot Controls</h2>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Control Panel</h5>
+                            </div>
+                            <div class="card-body">
+                                <button class="btn btn-warning w-100" onclick="restartBot()" id="restartBtn">
+                                    <i class="fa-solid fa-rotate-right"></i> Restart Bot
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration Page -->
+            <div class="page-section" id="configuration">
+                <h2 class="mb-4">Bot Configuration</h2>
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Bot Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Bot Name</label>
+                            <input type="text" class="form-control" id="botName" value="Loki">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Bot Tone</label>
+                            <select class="form-select" id="botTone">
+                                <option value="upbeat">Friendly & Upbeat</option>
+                                <option value="sarcastic">Sarcastic & Witty</option>
+                                <option value="wise">Wise & Philosophical</option>
+                                <option value="energetic">Energetic & Excited</option>
+                                <option value="chill">Chill & Laid-back</option>
+                                <option value="phuppo">Phuppo</option>
+                                <option value="gangster">Gangster</option>
+                                <option value="party">Party Gangster</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Welcome Message</label>
+                            <textarea class="form-control" id="welcomeMsg" rows="3">Welcome {name}</textarea>
+                            <small class="text-muted">Use {name} as placeholder for username</small>
+                        </div>
+                        <button class="btn btn-primary" onclick="updateBotConfig()" id="configBtn">
+                            <i class="fa-solid fa-floppy-disk"></i> Update Configuration
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="page-section" id="settings">
+                <h2 class="mb-4">Bot Settings</h2>
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center py-3 border-bottom">
+                            <div>
+                                <h6 class="mb-1">Allow Avatars</h6>
+                                <small class="text-muted">Enable avatar checking for users</small>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="allowAvatars" checked>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center py-3 border-bottom">
+                            <div>
+                                <h6 class="mb-1">Ban Level</h6>
+                                <small class="text-muted">Minimum level to avoid auto-ban</small>
+                            </div>
+                            <input type="number" class="form-control" id="banLevel" value="10" min="1" max="100" style="width: 100px;">
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center py-3">
+                            <div>
+                                <h6 class="mb-1">Allow Guest IDs</h6>
+                                <small class="text-muted">Permit guest account entry</small>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="allowGuests">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary mt-3" onclick="updateSettings()" id="settingsBtn">
+                            <i class="fa-solid fa-floppy-disk"></i> Update Settings
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Members Page -->
+            <div class="page-section" id="members">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h2 class="mb-0">Member Management</h2>
+                    <span class="badge bg-primary fs-6" id="memberCount">0 Members</span>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        <button class="btn btn-success mb-3" onclick="fetchMembers()" id="fetchBtn">
+                            <i class="fa-solid fa-download"></i> Fetch Members
+                        </button>
+
+                        <div class="alert alert-warning">
+                            <h6 class="mb-3">Bulk Remove by Level</h6>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <label class="form-label small">Level</label>
+                                    <input type="number" class="form-control" id="bulkLevel" value="1" min="1" max="100">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Count</label>
+                                    <input type="number" class="form-control" id="bulkCount" value="10" min="1" max="100">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">&nbsp;</label>
+                                    <button class="btn btn-danger w-100" onclick="bulkRemove()" id="bulkBtn">
+                                        <i class="fa-solid fa-user-minus"></i> Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="membersList"></div>
+                        <nav id="pagination" style="display: none;">
+                            <ul class="pagination justify-content-center" id="paginationList"></ul>
+                        </nav>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Protection Page -->
+            <div class="page-section" id="protection">
+                <h2 class="mb-4">Protection Settings</h2>
+                <div class="row">
+                    <div class="col-lg-4 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Admin Management</h5>
+                            </div>
+                            <div class="card-body">
+                                <label class="form-label">Admin IDs (comma separated)</label>
+                                <textarea class="form-control mb-3" id="adminIds" rows="6"></textarea>
+                                <button class="btn btn-warning w-100" onclick="updateAdmins()" id="adminBtn">
+                                    <i class="fa-solid fa-floppy-disk"></i> Update Admins
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Spam Protection</h5>
+                            </div>
+                            <div class="card-body">
+                                <label class="form-label">Spam Words (one per line)</label>
+                                <textarea class="form-control mb-3" id="spamWords" rows="6"></textarea>
+                                <button class="btn btn-success w-100" onclick="updateSpam()" id="spamBtn">
+                                    <i class="fa-solid fa-floppy-disk"></i> Update Spam Words
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 mb-3">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Banned Patterns</h5>
+                            </div>
+                            <div class="card-body">
+                                <label class="form-label">Banned Name Patterns (comma separated)</label>
+                                <textarea class="form-control mb-3" id="bannedPatterns" rows="6"></textarea>
+                                <button class="btn btn-danger w-100" onclick="updatePatterns()" id="patternsBtn">
+                                    <i class="fa-solid fa-floppy-disk"></i> Update Patterns
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Page -->
+            <div class="page-section" id="logs">
+                <h2 class="mb-4">Activity Logs</h2>
+                <div class="card">
+                    <div class="card-body">
+                        <div class="log-container" id="logContainer"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // State
+        const state = {
+            members: [],
+            currentPage: 1,
+            perPage: 10,
+            totalMembers: 0
+        };
+
+        // Navigation
+        document.querySelectorAll('.menu-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const page = this.getAttribute('data-page');
+                
+                document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
+                this.classList.add('active');
+                
+                document.querySelectorAll('.page-section').forEach(p => p.classList.remove('active'));
+                document.getElementById(page).classList.add('active');
+                
+                if (window.innerWidth <= 768) {
+                    document.getElementById('sidebar').classList.remove('show');
+                    document.getElementById('overlay').classList.remove('show');
+                }
+            });
+        });
+
+        document.getElementById('menuBtn').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.toggle('show');
+            document.getElementById('overlay').classList.toggle('show');
+        });
+
+        document.getElementById('overlay').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.remove('show');
+            document.getElementById('overlay').classList.remove('show');
+        });
+
+        function goToPage(page) {
+            document.querySelector(`[data-page="${page}"]`).click();
+        }
+
+        // Utilities
+        function loading(btnId, text = 'Loading...') {
+            const btn = document.getElementById(btnId);
+            btn.disabled = true;
+            btn.dataset.html = btn.innerHTML;
+            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${text}`;
+        }
+
+        function loaded(btnId) {
+            const btn = document.getElementById(btnId);
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.html;
+        }
+
+        function log(msg, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.innerHTML = `<span class="log-time">[${time}]</span>${msg}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+            
+            if (container.children.length > 100) {
+                container.removeChild(container.firstChild);
+            }
+        }
+
+        function escape(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // API
+        async function api(url, method = 'GET', data = null) {
+            try {
+                const options = { method, headers: { 'Content-Type': 'application/json' } };
+                if (data) options.body = JSON.stringify(data);
+                
+                const response = await fetch(url, options);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                return await response.json();
+            } catch (error) {
+                log(`API Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Bot Controls
+        async function restartBot() {
+            loading('restartBtn', 'Restarting...');
+            log('Initiating bot restart...', 'warning');
+            
+            try {
+                const result = await api('/api/jack/restart', 'POST');
+                if (result.success) {
+                    log('Bot restart successful', 'success');
+                    let count = 5;
+                    const interval = setInterval(() => {
+                        document.getElementById('restartBtn').innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Restarting in ${count}s...`;
+                        count--;
+                        if (count < 0) {
+                            clearInterval(interval);
+                            loaded('restartBtn');
+                            log('Bot restarted', 'info');
+                        }
+                    }, 1000);
+                } else {
+                    throw new Error(result.message || 'Restart failed');
+                }
+            } catch (error) {
+                log(`Failed to restart: ${error.message}`, 'error');
+                loaded('restartBtn');
+            }
+        }
+
+        // Bot Config
+        async function updateBotConfig() {
+            loading('configBtn', 'Updating...');
+            
+            try {
+                const name = document.getElementById('botName').value.trim();
+                const tone = document.getElementById('botTone').value;
+                const msg = document.getElementById('welcomeMsg').value.trim();
+                
+                if (!name) throw new Error('Bot name cannot be empty');
+                if (!msg) throw new Error('Welcome message cannot be empty');
+                
+                if (!msg.includes('{name}')) {
+                    if (!confirm('Warning: Welcome message does not contain {name}. Continue?')) {
+                        loaded('configBtn');
+                        return;
+                    }
+                }
+                
+                const result = await api('/api/jack/bot-config', 'POST', { botName: name, botTone: tone, welcomeMessage: msg });
+                
+                if (result.success) {
+                    document.getElementById('dashBotName').textContent = name;
+                    document.getElementById('dashBotTone').textContent = tone;
+                    log('Bot configuration updated', 'success');
+                } else {
+                    throw new Error(result.message || 'Update failed');
+                }
+            } catch (error) {
+                log(`Failed to update config: ${error.message}`, 'error');
+            } finally {
+                loaded('configBtn');
+            }
+        }
+
+        async function loadBotConfig() {
+            try {
+                const result = await api('/api/jack/bot-config');
+                if (result.success) {
+                    const config = result.data;
+                    document.getElementById('botName').value = config.botName || 'Loki';
+                    document.getElementById('botTone').value = config.botTone || 'upbeat';
+                    document.getElementById('welcomeMsg').value = config.welcomeMessage || 'Welcome {name}';
+                    document.getElementById('dashBotName').textContent = config.botName || 'Loki';
+                    document.getElementById('dashBotTone').textContent = config.botTone || 'upbeat';
+                    log('Bot config loaded', 'info');
+                }
+            } catch (error) {
+                log(`Failed to load config: ${error.message}`, 'warning');
+            }
+        }
+
+        // Settings
+        async function updateSettings() {
+            loading('settingsBtn', 'Updating...');
+            
+            try {
+                const avatars = document.getElementById('allowAvatars').checked;
+                const level = parseInt(document.getElementById('banLevel').value) || 10;
+                const guests = document.getElementById('allowGuests').checked;
+                
+                const result = await api('/api/jack/settings', 'POST', { allowAvatars: avatars, banLevel: level, allowGuestIds: guests });
+                
+                if (result.success) {
+                    log('Settings updated', 'success');
+                } else {
+                    throw new Error(result.message || 'Update failed');
+                }
+            } catch (error) {
+                log(`Failed to update settings: ${error.message}`, 'error');
+            } finally {
+                loaded('settingsBtn');
+            }
+        }
+
+        async function loadSettings() {
+            try {
+                const result = await api('/api/jack/settings');
+                if (result.success) {
+                    document.getElementById('allowAvatars').checked = result.data.allowAvatars;
+                    document.getElementById('banLevel').value = result.data.banLevel;
+                    document.getElementById('allowGuests').checked = result.data.allowGuestIds;
+                    log('Settings loaded', 'info');
+                }
+            } catch (error) {
+                log(`Failed to load settings: ${error.message}`, 'warning');
+            }
+        }
+
+        // Members
+        async function fetchMembers() {
+            loading('fetchBtn', 'Fetching...');
+            
+            try {
+                const result = await api(`/api/jack/members?page=${state.currentPage}&limit=${state.perPage}`);
+                
+                if (result.success) {
+                    state.members = result.data.members;
+                    state.totalMembers = result.data.total;
+                    
+                    document.getElementById('totalMembers').textContent = result.data.levelStats.total;
+                    document.getElementById('highLevelMembers').textContent = result.data.levelStats.highLevel;
+                    document.getElementById('mediumLevelMembers').textContent = result.data.levelStats.mediumLevel;
+                    document.getElementById('lowLevelMembers').textContent = result.data.levelStats.lowLevel;
+                    document.getElementById('memberCount').textContent = `${result.data.levelStats.total} Members`;
+                    
+                    renderMembers();
+                    renderPagination();
+                    
+                    log(`Loaded ${result.data.members.length} members`, 'success');
+                } else {
+                    throw new Error(result.message || 'Failed to fetch');
+                }
+            } catch (error) {
+                log(`Failed to fetch members: ${error.message}`, 'error');
+                document.getElementById('membersList').innerHTML = '<div class="text-center py-5 text-muted"><i class="fa-solid fa-users-slash fa-3x mb-3"></i><h5>No Members</h5><p>Click Fetch Members to load data</p></div>';
+            } finally {
+                loaded('fetchBtn');
+            }
+        }
+
+        function renderMembers() {
+            const container = document.getElementById('membersList');
+            
+            if (state.members.length === 0) {
+                container.innerHTML = '<div class="text-center py-5 text-muted"><i class="fa-solid fa-users-slash fa-3x mb-3"></i><h5>No Members Found</h5></div>';
+                return;
+            }
+            
+            container.innerHTML = state.members.map(m => {
+                const level = m.LVL >= 10 ? 'high' : m.LVL >= 5 ? 'medium' : 'low';
+                const initials = (m.NM || 'U').substring(0, 2).toUpperCase();
+                return `
+                    <div class="member-list-item">
+                        <div class="d-flex align-items-center">
+                            <div class="member-avatar">${initials}</div>
+                            <div class="member-info">
+                                <h6>${escape(m.NM || 'Unknown')}</h6>
+                                <span class="badge-level badge-${level}">Level ${m.LVL}</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-danger btn-sm" onclick="removeMember('${m.UID}')" id="rm-${m.UID}">
+                            <i class="fa-solid fa-trash"></i> Remove
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderPagination() {
+            const nav = document.getElementById('pagination');
+            const list = document.getElementById('paginationList');
+            
+            if (state.totalMembers === 0) {
+                nav.style.display = 'none';
+                return;
+            }
+            
+            nav.style.display = 'block';
+            const totalPages = Math.ceil(state.totalMembers / state.perPage);
+            
+            let html = `<li class="page-item ${state.currentPage === 1 ? 'disabled' : ''}">
+                <a class="page-link" href="#" onclick="changePage(${state.currentPage - 1}); return false;">Previous</a>
+            </li>`;
+            
+            const maxPages = 5;
+            let start = Math.max(1, state.currentPage - Math.floor(maxPages / 2));
+            let end = Math.min(totalPages, start + maxPages - 1);
+            
+            if (end - start < maxPages - 1) {
+                start = Math.max(1, end - maxPages + 1);
+            }
+            
+            for (let i = start; i <= end; i++) {
+                html += `<li class="page-item ${i === state.currentPage ? 'active' : ''}">
+                    <a class="page-link" href="#" onclick="changePage(${i}); return false;">${i}</a>
+                </li>`;
+            }
+            
+            html += `<li class="page-item ${state.currentPage === totalPages ? 'disabled' : ''}">
+                <a class="page-link" href="#" onclick="changePage(${state.currentPage + 1}); return false;">Next</a>
+            </li>`;
+            
+            list.innerHTML = html;
+        }
+
+        async function changePage(page) {
+            const totalPages = Math.ceil(state.totalMembers / state.perPage);
+            if (page < 1 || page > totalPages) return;
+            state.currentPage = page;
+            await fetchMembers();
+        }
+
+        async function removeMember(uid) {
+            if (!confirm('Are you sure you want to remove this member?')) return;
+            
+            const btn = document.getElementById(`rm-${uid}`);
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Removing...';
+            
+            try {
+                const result = await api(`/api/jack/members/${uid}`, 'DELETE');
+                if (result.success) {
+                    log('Member removed', 'success');
+                    await fetchMembers();
+                } else {
+                    throw new Error(result.message || 'Failed to remove');
+                }
+            } catch (error) {
+                log(`Failed to remove member: ${error.message}`, 'error');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-trash"></i> Remove';
+            }
+        }
+
+        async function bulkRemove() {
+            const level = parseInt(document.getElementById('bulkLevel').value);
+            const count = parseInt(document.getElementById('bulkCount').value);
+            
+            if (!level || level < 1 || level > 100) {
+                log('Invalid level (1-100)', 'error');
+                return;
+            }
+            
+            if (!count || count < 1 || count > 100) {
+                log('Invalid count (1-100)', 'error');
+                return;
+            }
+            
+            if (!confirm(`Remove ${count} members at level ${level}? This cannot be undone.`)) return;
+            
+            loading('bulkBtn', 'Removing...');
+            
+            try {
+                const result = await api('/api/jack/members/bulk-remove', 'POST', { level, count });
+                if (result.success) {
+                    log(`Removed ${result.removedCount} members at level ${level}`, 'success');
+                    if (result.remainingAtLevel > 0) {
+                        log(`${result.remainingAtLevel} members remaining at level ${level}`, 'info');
+                    }
+                    await fetchMembers();
+                } else {
+                    throw new Error(result.message || 'Bulk remove failed');
+                }
+            } catch (error) {
+                log(`Failed bulk remove: ${error.message}`, 'error');
+            } finally {
+                loaded('bulkBtn');
+            }
+        }
+
+        // Protection
+        async function updateAdmins() {
+            loading('adminBtn', 'Updating...');
+            try {
+                const text = document.getElementById('adminIds').value;
+                const arr = text.split(',').map(s => s.trim()).filter(s => s);
+                const result = await api('/api/jack/config/admins', 'POST', { data: arr });
+                if (result.success) {
+                    log(`Admin list updated: ${arr.length} admins`, 'success');
+                } else {
+                    throw new Error(result.message || 'Update failed');
+                }
+            } catch (error) {
+                log(`Failed to update admins: ${error.message}`, 'error');
+            } finally {
+                loaded('adminBtn');
+            }
+        }
+
+        async function updateSpam() {
+            loading('spamBtn', 'Updating...');
+            try {
+                const text = document.getElementById('spamWords').value;
+                const arr = text.split('\n').map(s => s.trim()).filter(s => s);
+                const result = await api('/api/jack/config/spam-words', 'POST', { data: arr });
+                if (result.success) {
+                    log(`Spam words updated: ${arr.length} words`, 'success');
+                } else {
+                    throw new Error(result.message || 'Update failed');
+                }
+            } catch (error) {
+                log(`Failed to update spam words: ${error.message}`, 'error');
+            } finally {
+                loaded('spamBtn');
+            }
+        }
+
+        async function updatePatterns() {
+            loading('patternsBtn', 'Updating...');
+            try {
+                const text = document.getElementById('bannedPatterns').value;
+                const arr = text.split(',').map(s => s.trim()).filter(s => s);
+                const result = await api('/api/jack/config/banned-patterns', 'POST', { data: arr });
+                if (result.success) {
+                    log(`Banned patterns updated: ${arr.length} patterns`, 'success');
+                } else {
+                    throw new Error(result.message || 'Update failed');
+                }
+            } catch (error) {
+                log(`Failed to update patterns: ${error.message}`, 'error');
+            } finally {
+                loaded('patternsBtn');
+            }
+        }
+
+        async function loadConfigs() {
+            const configs = [
+                { id: 'adminIds', url: '/api/jack/config/admins', format: 'comma' },
+                { id: 'spamWords', url: '/api/jack/config/spam-words', format: 'lines' },
+                { id: 'bannedPatterns', url: '/api/jack/config/banned-patterns', format: 'comma' }
+            ];
+            
+            for (const config of configs) {
+                try {
+                    const result = await api(config.url);
+                    if (result.success && result.data.length) {
+                        const value = config.format === 'comma' ? result.data.join(', ') : result.data.join('\n');
+                        document.getElementById(config.id).value = value;
+                    }
+                } catch (error) {
+                    log(`Failed to load ${config.id}`, 'warning');
+                }
+            }
+        }
+
+        // Init
+        async function init() {
+            log('RexSquad Bot Manager initialized', 'info');
+            log('Managing REX SQUAD (3029915)', 'jack');
+            
+            try {
+                await Promise.all([loadSettings(), loadBotConfig(), loadConfigs()]);
+                log('All configurations loaded', 'success');
+                document.getElementById('membersList').innerHTML = '<div class="text-center py-5 text-muted"><i class="fa-solid fa-users-slash fa-3x mb-3"></i><h5>No Members</h5><p>Click "Fetch Members" to load data</p></div>';
+            } catch (error) {
+                log(`Init error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto logs
+        setInterval(() => {
+            if (Math.random() < 0.15) {
+                const msgs = [
+                    { msg: 'User message processed', type: 'info' },
+                    { msg: 'Spam message blocked', type: 'success' },
+                    { msg: 'User welcomed to club', type: 'jack' },
+                    { msg: 'Bot command executed', type: 'info' }
+                ];
+                const m = msgs[Math.floor(Math.random() * msgs.length)];
+                log(m.msg, m.type);
+            }
+        }, 8000);
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
