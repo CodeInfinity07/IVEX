@@ -50,6 +50,7 @@ coverage/
 
 #Song
 data/songs
+data/*.json
 
 # IDE and Editor files
 .vscode/
