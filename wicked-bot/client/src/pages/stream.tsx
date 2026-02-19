@@ -121,13 +121,6 @@ export default function StreamPage() {
     }
   }, [botConfigData]);
 
-  useEffect(() => {
-    fetch(buildApiUrl('/api/jack/openai-key'))
-      .then(res => res.json())
-      .then(data => { if (data.success) setOpenaiKey(data.key); })
-      .catch(() => {});
-  }, [buildApiUrl]);
-
   const getOrCreateAudioContext = useCallback(async () => {
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new AudioContext({ sampleRate: 24000 });
@@ -141,6 +134,13 @@ export default function StreamPage() {
   const buildApiUrl = useCallback((path: string) => {
     return BOT_API_URL ? `${BOT_API_URL}${path}` : path;
   }, []);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/api/jack/openai-key'))
+      .then(res => res.json())
+      .then(data => { if (data.success) setOpenaiKey(data.key); })
+      .catch(() => {});
+  }, [buildApiUrl]);
 
   const { data: configData, refetch: refetchConfig } = useQuery({
     queryKey: ['/api/jack/stream-config'],
